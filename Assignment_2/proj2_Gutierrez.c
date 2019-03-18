@@ -38,16 +38,23 @@ int main(){
 	struct Instr instructions[100];
 	struct State state = EmptyState;
 
-	// pipeline state declaration
-	
-
-	char currLine[11];		// eleven is the number of digits in the largest possible signed int (plus a negative symbol)
+	char currLine[13];		// 13 is the number of digits in the largest possible signed int (plus a negative symbol and a null character)
 	// getting data and populating storage*****************************************************
 	memset(dataMem,0,sizeof(dataMem));	// zero-ing out dataMem
 	memset(regFile,0,sizeof(regFile));	// zero-ing out regFile
 	int i = 1;
+	int line = 0;
 	while(fgets(currLine, sizeof(currLine), stdin)){
-		printCycle(pc,dataMem,regFile,state,i++);
+		sscanf(currLine,"%d",&line);
+		printf("%d\n",line);
+		if (line == 1){
+			printf("Broke at line %d!\n",i);
+			break;
+		}
+		else{
+			i++;		// REMEMBER TO ONLY DO THIS ONCE PER LOOP CYCLE
+		}
+		//printCycle(pc,dataMem,regFile,state,i++);
 	}
 	
 	/*int i = 0;
