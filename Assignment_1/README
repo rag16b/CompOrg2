@@ -1,0 +1,21 @@
+# Project 1 - MIPS Assembler
+# CDA 3101: Spring 2019
+
+	The provided c program file appears to be able to handle all instructions required
+by the professor. Note that their were some errors with the provided executable which forced
+me to manually test the instructions: bne, nor, la. Neither bne or nor were handled in the
+provided executable and the handling of la appeared to be incorrect. Similarly, it seems that
+in certain cases negative numbers are handled incorrectly by the provided executable and had to
+be tested manually.
+
+# Unresolved issues
+	Although my program can handle branch instructions generally speaking, it looks like it
+is unable to handle branch backward instructions.
+
+# Specific (semmingly resolved) issues
+	# Ori
+	When implementing ori, I was using sscanf to pull information from strings and in certain
+cases this resulted in a segmentation fault. I fixed the issue by changing the way in which sscanf
+was pulling the information (although the change I made shouldn't have affected the way it
+functioned). Further detail on what exactly I changed was given within my source code. (I assume their
+actually is a difference, only I don't have a good enough understanding of how sscanf works to know.
