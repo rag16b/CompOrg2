@@ -25,6 +25,7 @@ void translate(struct Instr*,const int*,int);		// translates machine language in
 void printCycle(int,int*,int*,struct State,int);	// prints one the state of current cycle
 void printMemReg(int*,int);	// helper to print things through printCycle
 void printState(struct State);	// helper to print things through printCycle
+char* findRegName(int);		// helper to find a given register number ***(this is an edited version of a function I used in my project one)
 
 int main(){
 	// used to reset state when necessary
@@ -69,26 +70,19 @@ int main(){
 	
 	// populating instruction struct array with translated machine instructions
 	translate(instructions,machInstr,numOfIn);
-	
-	for (i = 0; i < numOfIn; i++)
-		printf("%c %d %d %d %d %d %d %d %s\n",instructions[i].type,instructions[i].op,instructions[i].rs,instructions[i].rt,instructions[i].rd,instructions[i].shamt,instructions[i].funct,instructions[i].imm,instructions[i].inst);
-	
+		
 	// PRINTING DATA FOR ***TESTING*** PURPOSES
-	/*int i;
-	for (i = 0; i < numOfIn; i++)
+	/*for (i = 0; i < numOfIn; i++)
 		printf("%d: %d\n",i+1,machInstr[i]);
 	for (i = 0; i < numOfDM; i++)
 		printf("%d: %d\n",numOfIn+i+1,dataMem[i]);
-	for (i = 0; i < numOfIn; i++){
-		printf("\n");
-		printCycle(pc,dataMem,regFile,state,i+1);
-	}*/
-
-	// actual pipeline logic*******************************************************************
-	/*int i = 0;
 	for (i = 0; i < numOfIn; i++)
-		
-	}*/
+		printf("%c %d %d %d %d %d %d %d %s\n",instructions[i].type,instructions[i].op,instructions[i].rs,instructions[i].rt,instructions[i].rd,instructions[i].shamt,instructions[i].funct,instructions[i].imm,instructions[i].inst);
+	*/
+	
+	// actual pipeline logic*******************************************************************
+	for (i = 0; i < numOfIn; i++)
+		printCycle(pc,dataMem,regFile,state,i+1);
 	
 	return 0;
 }
@@ -119,9 +113,67 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 		else
 			inst[i].type = 'r';
 		// finding mips representation of an instruction
-		
+		switch(inst[i].op)
+		{
+			case 0:
+				if(inst[i].funct == 32)
+					inst[i].inst = "add";					
+				else if(inst[i].funct == 34)
+					inst[i].inst = "sub";					
+				else if(inst[i].funct == 0)
+					inst[i].inst = "sll";
+				break;
+			case 35:
+				inst[i].inst = "lw";
+				break;
+			case 43:
+				inst[i].inst = "sw";
+				break;
+			case 12:
+				inst[i].inst = "andi";
+				break;
+			case 13:
+				inst[i].inst = "ori";
+				break;
+			case 5:
+				inst[i].inst = "bne";
+				break;
+		}
 	}
 	
+}
+
+char* findRegName(int reg){
+	static char* temp;
+	char* numAsStr;
+	if (reg == 0)
+		temp = "$0";
+	else if (reg == 1)
+		temp = "$at";
+	else if (reg == 2)
+		temp = "$v0";
+	else if (reg == 3)
+		temp = "$v1";
+	else if (reg > 3 && reg < 8){
+		temp = "$a";
+		sprintf(numAsStr,"%d",(reg-4));
+		strcat(temp,numAsStr);
+	}
+	else if (reg > 7 && reg < 16){
+		temp = "$t";
+		sprintf(numAsStr,"%d",(reg-8));
+		strcat(temp,numAsStr);
+	}
+	else if (reg > 15 && reg < 24){
+		temp = "$s";
+		sprintf(numAsStr,"%d",(reg-16));
+		strcat(temp,numAsStr);
+	}
+	else if (reg == 24)
+		temp = "$t8";
+	else if (reg == 25)
+		temp = "$t9";
+	return temp;
 }
 
 void printCycle(int pc, int *dataMem, int *regFile, struct State state, int cycle){
