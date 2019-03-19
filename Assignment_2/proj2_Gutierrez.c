@@ -10,7 +10,7 @@
 
 // STRUCTURE DEFINITIONS -----------------------------------------------------------------
 struct Instr{char type; int op; int rs; int rt; int rd;
-	     int shamt; int funct; int imm; int addr;};
+	     int shamt; int funct; int imm; char* inst;};
 // pipeline register structures
 struct IfId{char *instruction; int pcPlus4;};
 struct IdEx{char *instruction; int pcPlus4; int branchTarg;
@@ -21,14 +21,15 @@ struct MemWb{char *instruction; int wrDatMem; int wrDatALU; int wrReg;};
 struct State{struct IfId ifid; struct IdEx idex; struct ExMem exmem; struct MemWb memwb;};
 
 // FUNCTION DEFINITIONS -------------------------------------------------------------------
-struct Instr extract(int*);
-void printCycle(int,int*,int*,struct State,int);
-void printMemReg(int*,int);
-void printState(struct State);
+void translate(struct Instr*,const int*,int);		// translates machine language into bits I can store into the Instr struct
+void printCycle(int,int*,int*,struct State,int);	// prints one the state of current cycle
+void printMemReg(int*,int);	// helper to print things through printCycle
+void printState(struct State);	// helper to print things through printCycle
 
 int main(){
 	// used to reset state when necessary
 	const struct State EmptyState = {.ifid.instruction="NOOP",.idex.instruction="NOOP",.exmem.instruction="NOOP",.memwb.instruction="NOOP"};
+	static const struct Instr EmptyInstr;
 
 	int pc = 0;			// holds current PC
 	int dataMem[32];		// holds data memory value
@@ -36,36 +37,90 @@ int main(){
 	int machInstr[100];
 	int dataWords[32];
 	struct Instr instructions[100];
+		int i;
+		for(i = 0; i < 100; i++)
+			instructions[i] = EmptyInstr;
 	struct State state = EmptyState;
 
 	char currLine[13];		// 13 is the number of digits in the largest possible signed int (plus a negative symbol and a null character)
 	// getting data and populating storage*****************************************************
 	memset(dataMem,0,sizeof(dataMem));	// zero-ing out dataMem
 	memset(regFile,0,sizeof(regFile));	// zero-ing out regFile
-	int i = 1;
+	memset(machInstr,0,sizeof(machInstr));	// zero-ing out machInstr
+	// extracting instructions
+	int track = 0;
 	int line = 0;
 	while(fgets(currLine, sizeof(currLine), stdin)){
 		sscanf(currLine,"%d",&line);
-		printf("%d\n",line);
-		if (line == 1){
-			printf("Broke at line %d!\n",i);
+		if (line == 1)
 			break;
-		}
-		else{
-			i++;		// REMEMBER TO ONLY DO THIS ONCE PER LOOP CYCLE
-		}
-		//printCycle(pc,dataMem,regFile,state,i++);
+		machInstr[track++] = line;	// REMEMBER TO ONLY DO THIS ONCE PER LOOP CYCLE
 	}
+	const int numOfIn = track;		// holds the number of instructions
 	
+	// extracting words and populating data memory
+	track = 0;
+	fgets(currLine,sizeof(currLine),stdin);	// ignoring the empty line after the halt
+	while(fgets(currLine,sizeof(currLine),stdin)){
+		sscanf(currLine,"%d",&line);
+		dataMem[track++] = line;
+	}
+	const int numOfDM = track;		// holds the number of words stored in data memory
+	
+	// populating instruction struct array with translated machine instructions
+	translate(instructions,machInstr,numOfIn);
+	
+	for (i = 0; i < numOfIn; i++)
+		printf("%c %d %d %d %d %d %d %d %s\n",instructions[i].type,instructions[i].op,instructions[i].rs,instructions[i].rt,instructions[i].rd,instructions[i].shamt,instructions[i].funct,instructions[i].imm,instructions[i].inst);
+	
+	// PRINTING DATA FOR ***TESTING*** PURPOSES
+	/*int i;
+	for (i = 0; i < numOfIn; i++)
+		printf("%d: %d\n",i+1,machInstr[i]);
+	for (i = 0; i < numOfDM; i++)
+		printf("%d: %d\n",numOfIn+i+1,dataMem[i]);
+	for (i = 0; i < numOfIn; i++){
+		printf("\n");
+		printCycle(pc,dataMem,regFile,state,i+1);
+	}*/
+
+	// actual pipeline logic*******************************************************************
 	/*int i = 0;
-	for (i = 0; i < instructions.size(); i++)
+	for (i = 0; i < numOfIn; i++)
 		
 	}*/
 	
 	return 0;
 }
 
-struct Instr extract(int *machInstr){
+void translate(struct Instr* inst,const int* machInstr, int size){
+	int currLine = 0;
+	int i;
+	for (i = 0; i < size; i++){
+		currLine = machInstr[i];
+		// handling noops
+		if (currLine == 0){
+			inst[i].type = 'x';	// x will denote a type that is neither j nor i
+			inst[i].inst = "NOOP";
+		}
+		// handling other instructions
+		inst[i].op = currLine >> 26 & 63;
+		inst[i].rs = (currLine >> 21) & 31;
+		inst[i].rt = (currLine >> 16) & 31;
+		inst[i].rd = (currLine >> 11) & 31;
+		inst[i].shamt = (currLine >> 6) & 31;
+		inst[i].funct = currLine & 63;
+		inst[i].imm = currLine & 65535;
+		// assigning instruction types
+		if (inst[i].op == 12 || inst[i].op == 13 || inst[i].op == 5 || inst[i].op == 35 || inst[i].op == 43)
+			inst[i].type = 'i';
+		else if (inst[i].op == 0 && inst[i].inst != "NOOP")	// for noops
+			inst[i].type = 'r';
+		else
+			inst[i].type = 'r';
+		// finding mips representation of an instruction
+		
+	}
 	
 }
 
@@ -79,7 +134,7 @@ void printCycle(int pc, int *dataMem, int *regFile, struct State state, int cycl
 	printMemReg(regFile,1);
 	printState(state);
 }
-
+// prints both Data Memory and Register File, depending on which one I send it
 void printMemReg(int *memReg, int which){
 	char *name;
 	if (which == 0)
