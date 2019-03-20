@@ -10,7 +10,7 @@
 
 // STRUCTURE DEFINITIONS -----------------------------------------------------------------
 struct Instr{char type; int op; int rs; int rt; int rd;
-	     int shamt; int funct; int imm; char* inst;};
+	     int shamt; int funct; int imm; char inst[100];};
 // pipeline register structures
 struct IfId{char *instruction; int pcPlus4;};
 struct IdEx{char *instruction; int pcPlus4; int branchTarg;
@@ -30,9 +30,15 @@ char* findRegName(int);		// helper to find a given register number ***(this is a
 int main(){
 	// used to reset state when necessary
 	const struct State EmptyState = {.ifid.instruction="NOOP",.idex.instruction="NOOP",.exmem.instruction="NOOP",.memwb.instruction="NOOP"};
-	static const struct Instr EmptyInstr;
+	static const struct Instr EmptyInstr = {};
+	const struct IfId EmptyIfid={.instruction="NOOP"};
+	const struct IdEx EmptyIdex={.instruction="NOOP"};
+	const struct ExMem EmptyExmem={.instruction="NOOP"};
+	const struct MemWb EmptyMemwb={.instruction="NOOP"};
+	
 
 	int pc = 0;			// holds current PC
+	int halt = 0;			// 0 if false 1 if true
 	int dataMem[32];		// holds data memory value
 	int regFile[32];		// holds register values
 	int machInstr[100];
@@ -41,7 +47,8 @@ int main(){
 		int i;
 		for(i = 0; i < 100; i++)
 			instructions[i] = EmptyInstr;
-	struct State state = EmptyState;
+	struct State currState = EmptyState;
+	struct State newState = EmptyState;
 
 	char currLine[13];		// 13 is the number of digits in the largest possible signed int (plus a negative symbol and a null character)
 	// getting data and populating storage*****************************************************
@@ -53,9 +60,11 @@ int main(){
 	int line = 0;
 	while(fgets(currLine, sizeof(currLine), stdin)){
 		sscanf(currLine,"%d",&line);
-		if (line == 1)
+		if (line == 1){
+			machInstr[track++] = line;
 			break;
-		machInstr[track++] = line;	// REMEMBER TO ONLY DO THIS ONCE PER LOOP CYCLE
+		}
+		machInstr[track++] = line;
 	}
 	const int numOfIn = track;		// holds the number of instructions
 	
@@ -81,8 +90,44 @@ int main(){
 	*/
 	
 	// actual pipeline logic*******************************************************************
-	for (i = 0; i < numOfIn; i++)
-		printCycle(pc,dataMem,regFile,state,i+1);
+	i = 0;
+	while (halt == 0){
+		// IF/ID
+		if (i >= numOfIn)	// this along with all the other first if statements handle the end of the program (trailing noops)
+			newState.ifid = EmptyIfid;
+		else
+			newState.ifid.instruction = instructions[i].inst;
+		newState.ifid.pcPlus4 = pc + 4;		// trackin pcPlus4, will have to change when dealing with hazards
+		// ID/EX
+		if ((i-1) >= numOfIn)
+			newState.idex = EmptyIdex;
+		else if ((i-1) >= 0){
+			newState.idex.instruction = instructions[i-1].inst;
+			newState.idex.imm = instructions[i-1].imm;
+		}
+		newState.idex.pcPlus4 = pc;
+		// EX/MEM
+		if ((i-2) >= numOfIn)
+			newState.exmem = EmptyExmem;
+		else if ((i-2) >= 0){
+			newState.exmem.instruction = instructions[i-2].inst;
+		}
+		// MEM/WB
+		if ((i-3) >= numOfIn)
+			newState.memwb = EmptyMemwb;
+		else if ((i-3) >= 0){
+			newState.memwb.instruction = instructions[i-3].inst;
+		
+			if (strcmp(instructions[i-3].inst,"halt") == 0)
+				halt = 1;
+		}
+
+		printCycle(pc,dataMem,regFile,currState,++i);
+		if (halt == 1)
+			printCycle(pc,dataMem,regFile,newState,++i);
+		currState = newState;
+		pc += 4;
+	}
 	
 	return 0;
 }
@@ -90,13 +135,16 @@ int main(){
 void translate(struct Instr* inst,const int* machInstr, int size){
 	int currLine = 0;
 	int i;
+	char rs[4];
+	char rt[4];
+	char rd[4];
 	for (i = 0; i < size; i++){
 		currLine = machInstr[i];
 		// handling noops
-		if (currLine == 0){
-			inst[i].type = 'x';	// x will denote a type that is neither j nor i
-			inst[i].inst = "NOOP";
-		}
+		if (currLine == 0)
+			sprintf(inst[i].inst,"NOOP");
+		else if (currLine == 1)
+			sprintf(inst[i].inst,"halt");
 		// handling other instructions
 		inst[i].op = currLine >> 26 & 63;
 		inst[i].rs = (currLine >> 21) & 31;
@@ -105,47 +153,54 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 		inst[i].shamt = (currLine >> 6) & 31;
 		inst[i].funct = currLine & 63;
 		inst[i].imm = currLine & 65535;
-		// assigning instruction types
-		if (inst[i].op == 12 || inst[i].op == 13 || inst[i].op == 5 || inst[i].op == 35 || inst[i].op == 43)
-			inst[i].type = 'i';
-		else if (inst[i].op == 0 && inst[i].inst != "NOOP")	// for noops
-			inst[i].type = 'r';
-		else
-			inst[i].type = 'r';
+		// turning each register into a string, clearing the strings each time
+		memset(rs,0,sizeof(rs));
+		memset(rt,0,sizeof(rt));
+		memset(rd,0,sizeof(rd));
+		strcat(rs,findRegName(inst[i].rs));
+		strcat(rt,findRegName(inst[i].rt));
+		strcat(rd,findRegName(inst[i].rd));
 		// finding mips representation of an instruction
 		switch(inst[i].op)
 		{
 			case 0:
 				if(inst[i].funct == 32)
-					inst[i].inst = "add";					
+					sprintf(inst[i].inst,"add %s,%s,%s",rd,rs,rt);
 				else if(inst[i].funct == 34)
-					inst[i].inst = "sub";					
+					sprintf(inst[i].inst,"sub %s,%s,%s",rd,rs,rt);
 				else if(inst[i].funct == 0)
-					inst[i].inst = "sll";
+					sprintf(inst[i].inst,"sll %s,%s,%d",rd,rt,inst[i].shamt);
 				break;
 			case 35:
-				inst[i].inst = "lw";
+				sprintf(inst[i].inst,"lw %s,%d(%s)",rt,inst[i].imm,rs);
 				break;
 			case 43:
-				inst[i].inst = "sw";
+				sprintf(inst[i].inst,"sw %s,%d(%s)",rt,inst[i].imm,rs);
 				break;
 			case 12:
-				inst[i].inst = "andi";
+				sprintf(inst[i].inst,"andi %s,%s,%d",rt,rs,inst[i].imm);
 				break;
 			case 13:
-				inst[i].inst = "ori";
+				sprintf(inst[i].inst,"ori %s,%s,%d",rt,rs,inst[i].imm);
 				break;
 			case 5:
-				inst[i].inst = "bne";
+				sprintf(inst[i].inst,"bne %s,%s,%s",rs,rt,inst[i].imm);
 				break;
 		}
-	}
-	
+		// assigning instruction types
+		if (inst[i].op == 12 || inst[i].op == 13 || inst[i].op == 5 || inst[i].op == 35 || inst[i].op == 43)
+			inst[i].type = 'i';		// string compares below are to handle noops and halts
+		else if (strcmp(inst[i].inst,"NOOP") == 0 || strcmp(inst[i].inst,"halt") == 0)
+			inst[i].type = 'x';		// x will denote a type that is neither j nor i
+		else
+			inst[i].type = 'r';
+	}	
 }
 
 char* findRegName(int reg){
-	static char* temp;
-	char* numAsStr;
+	char* temp = NULL;
+	char numAsStr[2];
+	static char stor[5];
 	if (reg == 0)
 		temp = "$0";
 	else if (reg == 1)
@@ -155,24 +210,28 @@ char* findRegName(int reg){
 	else if (reg == 3)
 		temp = "$v1";
 	else if (reg > 3 && reg < 8){
-		temp = "$a";
+		strcpy(stor,"$a");
 		sprintf(numAsStr,"%d",(reg-4));
-		strcat(temp,numAsStr);
+		strcat(stor,numAsStr);
+		temp = stor;
 	}
 	else if (reg > 7 && reg < 16){
-		temp = "$t";
+		strcpy(stor,"$t");
 		sprintf(numAsStr,"%d",(reg-8));
-		strcat(temp,numAsStr);
+		strcat(stor,numAsStr);
+		temp = stor;
 	}
 	else if (reg > 15 && reg < 24){
-		temp = "$s";
+		strcpy(stor,"$s");
 		sprintf(numAsStr,"%d",(reg-16));
-		strcat(temp,numAsStr);
+		strcat(stor,numAsStr);
+		temp = stor;
 	}
 	else if (reg == 24)
 		temp = "$t8";
 	else if (reg == 25)
 		temp = "$t9";
+
 	return temp;
 }
 
