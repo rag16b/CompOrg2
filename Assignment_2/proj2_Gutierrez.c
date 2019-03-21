@@ -14,9 +14,9 @@ struct Instr{char type; int op; int rs; int rt; int rd;
 // pipeline register structures
 struct IfId{char *instruction; int pcPlus4;};
 struct IdEx{char *instruction; int pcPlus4; int branchTarg;
-	    int rData1; int rData2; int imm; int rs; int rt; int rd;};
-struct ExMem{char *instruction; int aluRes; int wrDatReg; int wrReg;};
-struct MemWb{char *instruction; int wrDatMem; int wrDatALU; int wrReg;};
+	    int rData1; int rData2; int imm; char rs[4]; char rt[4]; char rd[4];};
+struct ExMem{char *instruction; int aluRes; int wrDatReg; char wrReg[4];};
+struct MemWb{char *instruction; int wrDatMem; int wrDatALU; char wrReg[4];};
 // state structure
 struct State{struct IfId ifid; struct IdEx idex; struct ExMem exmem; struct MemWb memwb;};
 
@@ -26,17 +26,20 @@ void printCycle(int,int*,int*,struct State,int);	// prints one the state of curr
 void printMemReg(int*,int);	// helper to print things through printCycle
 void printState(struct State);	// helper to print things through printCycle
 char* findRegName(int);		// helper to find a given register number ***(this is an edited version of a function I used in my project one)
+char* findWrReg(struct Instr);	// helper to find the write registers for EX/MEM and MEM/WB
+int aluRes(struct Instr,int*);	// helper to find the ALU result for any given instruction
+void regFileUpdate(struct Instr,int*,int*,int);		// helper to actually execute an instruction and change the registers and what not
+void memDataUpdate(struct Instr,int*,int*,int);		// helper to deal with updates to data memory (really only affects teh sw instruction)
 
 int main(){
 	// used to reset state when necessary
 	const struct State EmptyState = {.ifid.instruction="NOOP",.idex.instruction="NOOP",.exmem.instruction="NOOP",.memwb.instruction="NOOP"};
 	static const struct Instr EmptyInstr = {};
 	const struct IfId EmptyIfid={.instruction="NOOP"};
-	const struct IdEx EmptyIdex={.instruction="NOOP"};
-	const struct ExMem EmptyExmem={.instruction="NOOP"};
-	const struct MemWb EmptyMemwb={.instruction="NOOP"};
+	const struct IdEx EmptyIdex={.instruction="NOOP",.rs="0",.rt="0",.rd="0"};
+	const struct ExMem EmptyExmem={.instruction="NOOP",.wrReg="0"};
+	const struct MemWb EmptyMemwb={.instruction="NOOP",.wrReg="0"};
 	
-
 	int pc = 0;			// holds current PC
 	int halt = 0;			// 0 if false 1 if true
 	int dataMem[32];		// holds data memory value
@@ -47,7 +50,7 @@ int main(){
 		int i;
 		for(i = 0; i < 100; i++)
 			instructions[i] = EmptyInstr;
-	struct State currState = EmptyState;
+	struct State prevState = EmptyState;
 	struct State newState = EmptyState;
 
 	char currLine[13];		// 13 is the number of digits in the largest possible signed int (plus a negative symbol and a null character)
@@ -90,46 +93,101 @@ int main(){
 	*/
 	
 	// actual pipeline logic*******************************************************************
+	//regFile[8] = 5;	// MANIPULATING REGISTERS FOR TESTING
+	//regFile[9] = 6;
 	i = 0;
+	int cycle;
 	while (halt == 0){
+		printCycle(pc,dataMem,regFile,newState,++i);
+		cycle = pc/4;
+
 		// IF/ID
-		if (i >= numOfIn)	// this along with all the other first if statements handle the end of the program (trailing noops)
-			newState.ifid = EmptyIfid;
-		else
-			newState.ifid.instruction = instructions[i].inst;
+		newState.ifid = EmptyIfid;
+		if (cycle < numOfIn)
+			newState.ifid.instruction = instructions[cycle].inst;
 		newState.ifid.pcPlus4 = pc + 4;		// trackin pcPlus4, will have to change when dealing with hazards
 		// ID/EX
-		if ((i-1) >= numOfIn)
-			newState.idex = EmptyIdex;
-		else if ((i-1) >= 0){
-			newState.idex.instruction = instructions[i-1].inst;
-			newState.idex.imm = instructions[i-1].imm;
+		newState.idex = EmptyIdex;
+		if ((cycle-1) >= 0 && (cycle-1) < numOfIn){
+			newState.idex.instruction = instructions[cycle-1].inst;
+			newState.idex.rData1 = regFile[instructions[cycle-1].rs];
+			newState.idex.rData2 = regFile[instructions[cycle-1].rt];
+			newState.idex.imm = instructions[cycle-1].imm;
+			if (strcmp(instructions[cycle-1].inst,"halt") != 0){
+				strcpy(newState.idex.rs,findRegName(instructions[cycle-1].rs));
+				strcpy(newState.idex.rt,findRegName(instructions[cycle-1].rt));
+				// to deal make sure rd reads "0" or "$0" when it should
+				if (strncmp(instructions[i-1].inst,"add",3) == 0 || strncmp(instructions[cycle-1].inst,"sub",3) == 0)
+					strcpy(newState.idex.rd,findRegName(instructions[cycle-1].rd));
+			}
 		}
 		newState.idex.pcPlus4 = pc;
+		newState.idex.branchTarg = ((instructions[cycle-1].imm*4) + newState.idex.pcPlus4);
 		// EX/MEM
-		if ((i-2) >= numOfIn)
-			newState.exmem = EmptyExmem;
-		else if ((i-2) >= 0){
-			newState.exmem.instruction = instructions[i-2].inst;
+		newState.exmem = EmptyExmem;
+		if ((cycle-2) >= 0 && (cycle-2) < numOfIn){
+			newState.exmem.instruction = instructions[cycle-2].inst;
+			newState.exmem.aluRes = aluRes(instructions[cycle-2],regFile);
+			//newState.exmem.wrDatReg = ;
+			strcpy(newState.exmem.wrReg,findWrReg(instructions[cycle-2]));
 		}
 		// MEM/WB
-		if ((i-3) >= numOfIn)
-			newState.memwb = EmptyMemwb;
-		else if ((i-3) >= 0){
-			newState.memwb.instruction = instructions[i-3].inst;
-		
-			if (strcmp(instructions[i-3].inst,"halt") == 0)
+		newState.memwb = EmptyMemwb;
+		if ((cycle-3) >= 0 && (cycle-3) < numOfIn){
+			newState.memwb.instruction = instructions[cycle-3].inst;
+			//newState.memwb.wrDatMem = ;
+			newState.memwb.wrDatALU = aluRes(instructions[cycle-3],regFile);
+			strcpy(newState.memwb.wrReg,findWrReg(instructions[cycle-3]));
+			memDataUpdate(instructions[cycle-4],regFile,dataMem,numOfIn);
+			
+			if (strcmp(instructions[cycle-3].inst,"halt") == 0)
 				halt = 1;
 		}
+		// REGFILE UPDATE
+		if (cycle-4 >= 0 && (cycle-4) < numOfIn)
+			regFileUpdate(instructions[cycle-4],regFile,dataMem,numOfIn);
 
-		printCycle(pc,dataMem,regFile,currState,++i);
-		if (halt == 1)
+		if (halt == 1)		// print the last cycle
 			printCycle(pc,dataMem,regFile,newState,++i);
-		currState = newState;
+		prevState = newState;
 		pc += 4;
 	}
 	
 	return 0;
+}// end main
+
+void memDataUpdate(struct Instr inst, int* regFile, int* dataMem, int numOfIn){
+	if (strncmp(inst.inst,"sw",2) == 0)
+		dataMem[(aluRes(inst,regFile)-numOfIn*4)/4] = regFile[inst.rt];
+}
+
+void regFileUpdate(struct Instr inst, int* regFile, int* dataMem, int numOfIn){
+	if (strncmp(inst.inst,"add",3) == 0 || strncmp(inst.inst,"sub",3) == 0 || strncmp(inst.inst,"sll",3) == 0)
+		regFile[inst.rd] = aluRes(inst,regFile);
+	if (strncmp(inst.inst,"andi",4) == 0 || strncmp(inst.inst,"ori",3) == 0)
+		regFile[inst.rt] = aluRes(inst,regFile);
+	if (strncmp(inst.inst,"lw",2) == 0)
+		regFile[inst.rt] = dataMem[(aluRes(inst,regFile)-numOfIn*4)/4];
+}
+
+int aluRes(struct Instr inst, int* regFile){
+	int result;		// **********NEED TO GET regFile ELEMENT AT EVERY GIVEN REGISTER
+	if (strncmp(inst.inst,"add",3) == 0)
+		result = regFile[inst.rs] + regFile[inst.rt];
+	else if(strncmp(inst.inst,"sub",3) == 0)
+		result = regFile[inst.rs] - regFile[inst.rt];
+	else if(strncmp(inst.inst,"lw",2) == 0 || strncmp(inst.inst,"sw",2) == 0)
+		result = regFile[inst.rs] + inst.imm;		// MAY NEED TO SIGN EXTEND
+	else if(strncmp(inst.inst,"sll",3) == 0)
+		result = regFile[inst.rt] << inst.shamt;
+	else if(strncmp(inst.inst,"andi",4) == 0)
+		result = regFile[inst.rs] & inst.imm;		// MAY NEED TO ZERO EXTEND LEFT
+	else if(strncmp(inst.inst,"ori",3) == 0)
+		result = regFile[inst.rs] | inst.imm;		// MAY NEED TO ZERO EXTEND LEFT
+	else if(strcmp(inst.inst,"halt") == 0)
+		result = regFile[0];
+	//else if(strncmp(inst.inst,"bne",3) == 0)	// I THINK THIS IS JUST BRANCH TARG (IF YES DO IN MAIN)
+	return result;
 }
 
 void translate(struct Instr* inst,const int* machInstr, int size){
@@ -195,7 +253,7 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 		else
 			inst[i].type = 'r';
 	}	
-}
+}// end translate
 
 char* findRegName(int reg){
 	char* temp = NULL;
@@ -233,7 +291,7 @@ char* findRegName(int reg){
 		temp = "$t9";
 
 	return temp;
-}
+}// end findRegName
 
 void printCycle(int pc, int *dataMem, int *regFile, struct State state, int cycle){
 	printf("********************\n");
@@ -274,11 +332,22 @@ void printState(struct State state){
 	// ID/EX
 	printf("\tID/EX:\n\t\tInstruction: %s\n\t\tPCPlus4: %d\n",state.idex.instruction,state.idex.pcPlus4);
 	printf("\t\tbranchTarget: %d\n\t\treadData1: %d\n\t\treadData2: %d\n",state.idex.branchTarg,state.idex.rData1,state.idex.rData2);
-	printf("\t\timmed: %d\n\t\trs: %d\n\t\trt: %d\n\t\trd: %d\n",state.idex.imm,state.idex.rs,state.idex.rt,state.idex.rd);
+	printf("\t\timmed: %d\n\t\trs: %s\n\t\trt: %s\n\t\trd: %s\n",state.idex.imm,state.idex.rs,state.idex.rt,state.idex.rd);
 	// EX/MEM
 	printf("\tEX/MEM:\n\t\tInstruction: %s\n\t\taluResult: %d\n",state.exmem.instruction,state.exmem.aluRes);
-	printf("\t\twriteDataReg: %d\n\t\twriteReg: %d\n",state.exmem.wrDatReg,state.exmem.wrReg);
+	printf("\t\twriteDataReg: %d\n\t\twriteReg: %s\n",state.exmem.wrDatReg,state.exmem.wrReg);
 	// MEM/WB
 	printf("\tMEM/WB:\n\t\tInstruction: %s\n\t\twriteDataMem: %d\n",state.memwb.instruction,state.memwb.wrDatMem);
-	printf("\t\twriteDataALU: %d\n\t\twriteReg: %d\n",state.memwb.wrDatALU,state.memwb.wrReg);
+	printf("\t\twriteDataALU: %d\n\t\twriteReg: %s\n",state.memwb.wrDatALU,state.memwb.wrReg);
+}
+
+char* findWrReg(struct Instr inst){
+	char* temp;
+	if (strncmp(inst.inst,"bne",3) == 0 || strcmp(inst.inst,"halt") == 0)
+		temp = "0";
+	else if (strncmp(inst.inst,"add",3) == 0 || strncmp(inst.inst,"sub",3) == 0)
+		temp = findRegName(inst.rd);
+	else
+		temp = findRegName(inst.rt);
+	return temp;
 }
