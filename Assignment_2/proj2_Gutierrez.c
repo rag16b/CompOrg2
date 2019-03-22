@@ -4,13 +4,15 @@
 // CDA3101
 // Pipeline Simulator
 
+// Potential problems:
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 // STRUCTURE DEFINITIONS -----------------------------------------------------------------
 struct Instr{char type; int op; int rs; int rt; int rd;
-	     int shamt; int funct; int imm; char inst[100];};
+	     int shamt; int funct; int imm; char inst[100]; char targReg[3];};
 // pipeline register structures
 struct IfId{char *instruction; int pcPlus4;};
 struct IdEx{char *instruction; int pcPlus4; int branchTarg;
@@ -30,11 +32,13 @@ char* findWrReg(struct Instr);	// helper to find the write registers for EX/MEM 
 int aluRes(struct Instr,int*);	// helper to find the ALU result for any given instruction
 void regFileUpdate(struct Instr,int*,int*,int);		// helper to actually execute an instruction and change the registers and what not
 void memDataUpdate(struct Instr,int*,int*,int);		// helper to deal with updates to data memory (really only affects teh sw instruction)
+void stall(struct Instr*,struct Instr,int,int);		// injects a stall at the given location in the instruction array
+int isHazard(struct Instr*,int);	// helper that returns 1 if true and 0 if false
 
 int main(){
 	// used to reset state when necessary
 	const struct State EmptyState = {.ifid.instruction="NOOP",.idex.instruction="NOOP",.exmem.instruction="NOOP",.memwb.instruction="NOOP"};
-	static const struct Instr EmptyInstr = {};
+	static const struct Instr EmptyInstr = {.inst="NOOP"};
 	const struct IfId EmptyIfid={.instruction="NOOP"};
 	const struct IdEx EmptyIdex={.instruction="NOOP",.rs="0",.rt="0",.rd="0"};
 	const struct ExMem EmptyExmem={.instruction="NOOP",.wrReg="0"};
@@ -46,7 +50,7 @@ int main(){
 	int regFile[32];		// holds register values
 	int machInstr[100];
 	int dataWords[32];
-	struct Instr instructions[100];
+	struct Instr instructions[500];	// 500 becuase stalls (I know it's less but I'm not doing the math)
 		int i;
 		for(i = 0; i < 100; i++)
 			instructions[i] = EmptyInstr;
@@ -86,7 +90,7 @@ int main(){
 	// PRINTING DATA FOR ***TESTING*** PURPOSES
 	/*for (i = 0; i < numOfIn; i++)
 		printf("%d: %d\n",i+1,machInstr[i]);
-	for (i = 0; i < numOfDM; i++)
+	/*for (i = 0; i < numOfDM; i++)
 		printf("%d: %d\n",numOfIn+i+1,dataMem[i]);
 	for (i = 0; i < numOfIn; i++)
 		printf("%c %d %d %d %d %d %d %d %s\n",instructions[i].type,instructions[i].op,instructions[i].rs,instructions[i].rt,instructions[i].rd,instructions[i].shamt,instructions[i].funct,instructions[i].imm,instructions[i].inst);
@@ -97,23 +101,29 @@ int main(){
 	//regFile[9] = 6;
 	i = 0;
 	int cycle;
+	int numStalls;
 	while (halt == 0){
 		printCycle(pc,dataMem,regFile,newState,++i);
 		cycle = pc/4;
 
 		// IF/ID
 		newState.ifid = EmptyIfid;
-		if (cycle < numOfIn)
+		if (cycle < numOfIn+numStalls)
 			newState.ifid.instruction = instructions[cycle].inst;
 		newState.ifid.pcPlus4 = pc + 4;		// trackin pcPlus4, will have to change when dealing with hazards
 		// ID/EX
 		newState.idex = EmptyIdex;
-		if ((cycle-1) >= 0 && (cycle-1) < numOfIn){
+		if ((cycle-1) >= 0 && (cycle-1) < numOfIn+numStalls){
+			// DEALING WITH STALLS
+			if (strncmp(instructions[cycle-1].inst,"lw",2) == 0 && isHazard(instructions,cycle) == 1){
+				printf("Got Here\n");
+				stall(instructions,EmptyInstr,cycle-1,numOfIn+(numStalls++));
+			}// end stall handling
 			newState.idex.instruction = instructions[cycle-1].inst;
 			newState.idex.rData1 = regFile[instructions[cycle-1].rs];
 			newState.idex.rData2 = regFile[instructions[cycle-1].rt];
 			newState.idex.imm = instructions[cycle-1].imm;
-			if (strcmp(instructions[cycle-1].inst,"halt") != 0){
+			if (strcmp(instructions[cycle-1].inst,"halt") != 0 && strcmp(instructions[cycle-1].inst,"NOOP") != 0){
 				strcpy(newState.idex.rs,findRegName(instructions[cycle-1].rs));
 				strcpy(newState.idex.rt,findRegName(instructions[cycle-1].rt));
 				// to deal make sure rd reads "0" or "$0" when it should
@@ -125,7 +135,7 @@ int main(){
 		newState.idex.branchTarg = ((instructions[cycle-1].imm*4) + newState.idex.pcPlus4);
 		// EX/MEM
 		newState.exmem = EmptyExmem;
-		if ((cycle-2) >= 0 && (cycle-2) < numOfIn){
+		if (((cycle-2) >= 0 && (cycle-2) < numOfIn+numStalls) && strcmp(instructions[cycle-2].inst,"NOOP") != 0){
 			newState.exmem.instruction = instructions[cycle-2].inst;
 			newState.exmem.aluRes = aluRes(instructions[cycle-2],regFile);
 			//newState.exmem.wrDatReg = ;
@@ -133,28 +143,43 @@ int main(){
 		}
 		// MEM/WB
 		newState.memwb = EmptyMemwb;
-		if ((cycle-3) >= 0 && (cycle-3) < numOfIn){
+		if (((cycle-3) >= 0 && (cycle-3) < numOfIn+numStalls) && strcmp(instructions[cycle-3].inst,"NOOP") != 0){
 			newState.memwb.instruction = instructions[cycle-3].inst;
 			//newState.memwb.wrDatMem = ;
 			newState.memwb.wrDatALU = aluRes(instructions[cycle-3],regFile);
 			strcpy(newState.memwb.wrReg,findWrReg(instructions[cycle-3]));
-			memDataUpdate(instructions[cycle-4],regFile,dataMem,numOfIn);
+			memDataUpdate(instructions[cycle-4],regFile,dataMem,numOfIn);	// updates the data memory
 			
 			if (strcmp(instructions[cycle-3].inst,"halt") == 0)
 				halt = 1;
 		}
-		// REGFILE UPDATE
-		if (cycle-4 >= 0 && (cycle-4) < numOfIn)
+		// updates the register file
+		if (cycle-4 >= 0 && (cycle-4) < numOfIn+numStalls)
 			regFileUpdate(instructions[cycle-4],regFile,dataMem,numOfIn);
 
 		if (halt == 1)		// print the last cycle
 			printCycle(pc,dataMem,regFile,newState,++i);
 		prevState = newState;
 		pc += 4;
+
+		if (cycle > 17)
+			break;
 	}
 	
 	return 0;
 }// end main
+
+int isHazard(struct Instr* inst, int cycle){	// returns 1 if true and 0 if false
+	
+	return 0;
+}
+
+void stall(struct Instr* inst, struct Instr empty, int pos, int numOfIn){
+	int i;
+	for (i = numOfIn-1; i >= pos-1; i--)
+		inst[i+1] = inst[i];
+	inst[pos-1] = empty;
+}
 
 void memDataUpdate(struct Instr inst, int* regFile, int* dataMem, int numOfIn){
 	if (strncmp(inst.inst,"sw",2) == 0)
@@ -228,21 +253,27 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 					sprintf(inst[i].inst,"sub %s,%s,%s",rd,rs,rt);
 				else if(inst[i].funct == 0)
 					sprintf(inst[i].inst,"sll %s,%s,%d",rd,rt,inst[i].shamt);
+				sprintf(inst[i].targReg,"%s","rd");
 				break;
 			case 35:
 				sprintf(inst[i].inst,"lw %s,%d(%s)",rt,inst[i].imm,rs);
+				sprintf(inst[i].targReg,"%s","rt");
 				break;
 			case 43:
 				sprintf(inst[i].inst,"sw %s,%d(%s)",rt,inst[i].imm,rs);
+				sprintf(inst[i].targReg,"%s","0");	// bc it has no target registers
 				break;
 			case 12:
 				sprintf(inst[i].inst,"andi %s,%s,%d",rt,rs,inst[i].imm);
+				sprintf(inst[i].targReg,"%s","rt");
 				break;
 			case 13:
 				sprintf(inst[i].inst,"ori %s,%s,%d",rt,rs,inst[i].imm);
+				sprintf(inst[i].targReg,"%s","rt");
 				break;
 			case 5:
 				sprintf(inst[i].inst,"bne %s,%s,%s",rs,rt,inst[i].imm);
+				sprintf(inst[i].targReg,"%s","0");	// bc it has no target registers
 				break;
 		}
 		// assigning instruction types
