@@ -11,8 +11,8 @@
 #include <string.h>
 
 // STRUCTURE DEFINITIONS -----------------------------------------------------------------
-struct Instr{char type; int op; int rs; int rt; int rd;
-	     int shamt; int funct; int imm; char inst[100]; char targReg[3];};
+struct Instr{char type; int op; int rs; int rt; int rd; int shamt; 
+	     int funct; int imm; char inst[100]; int srcReg;};
 // pipeline register structures
 struct IfId{char *instruction; int pcPlus4;};
 struct IdEx{char *instruction; int pcPlus4; int branchTarg;
@@ -33,7 +33,7 @@ int aluRes(struct Instr,int*);	// helper to find the ALU result for any given in
 void regFileUpdate(struct Instr,int*,int*,int);		// helper to actually execute an instruction and change the registers and what not
 void memDataUpdate(struct Instr,int*,int*,int);		// helper to deal with updates to data memory (really only affects teh sw instruction)
 void stall(struct Instr*,struct Instr,int,int);		// injects a stall at the given location in the instruction array
-int isHazard(struct Instr*,int);	// helper that returns 1 if true and 0 if false
+int isHazard(struct Instr,struct Instr,struct Instr);	// helper that returns 1 if true and 0 if false
 
 int main(){
 	// used to reset state when necessary
@@ -97,11 +97,11 @@ int main(){
 	*/
 	
 	// actual pipeline logic*******************************************************************
-	//regFile[8] = 5;	// MANIPULATING REGISTERS FOR TESTING
-	//regFile[9] = 6;
 	i = 0;
-	int cycle;
-	int numStalls;
+	int cycle = 0;
+	int numStalls = 0;
+	int numBranches = 0;
+	int numMisBranches = 0;
 	while (halt == 0){
 		printCycle(pc,dataMem,regFile,newState,++i);
 		cycle = pc/4;
@@ -114,10 +114,10 @@ int main(){
 		// ID/EX
 		newState.idex = EmptyIdex;
 		if ((cycle-1) >= 0 && (cycle-1) < numOfIn+numStalls){
-			// DEALING WITH STALLS
-			if (strncmp(instructions[cycle-1].inst,"lw",2) == 0 && isHazard(instructions,cycle) == 1){
+			// DEALING WITH STALLS (testing a specific instruciton in test case 1 currently)
+			if (strncmp(instructions[cycle-2].inst,"lw",2) == 0 && instructions[cycle-2].rt == 9/*&& isHazard(instructions[cycle-1],instructions[cycle-2],instructions[cycle-3]) == 1*/){
 				printf("Got Here\n");
-				stall(instructions,EmptyInstr,cycle-1,numOfIn+(numStalls++));
+				stall(instructions,EmptyInstr,cycle,numOfIn+(numStalls++));
 			}// end stall handling
 			newState.idex.instruction = instructions[cycle-1].inst;
 			newState.idex.rData1 = regFile[instructions[cycle-1].rs];
@@ -126,7 +126,7 @@ int main(){
 			if (strcmp(instructions[cycle-1].inst,"halt") != 0 && strcmp(instructions[cycle-1].inst,"NOOP") != 0){
 				strcpy(newState.idex.rs,findRegName(instructions[cycle-1].rs));
 				strcpy(newState.idex.rt,findRegName(instructions[cycle-1].rt));
-				// to deal make sure rd reads "0" or "$0" when it should
+				// to make sure rd reads "0" or "$0" when it should
 				if (strncmp(instructions[i-1].inst,"add",3) == 0 || strncmp(instructions[cycle-1].inst,"sub",3) == 0)
 					strcpy(newState.idex.rd,findRegName(instructions[cycle-1].rd));
 			}
@@ -145,7 +145,9 @@ int main(){
 		newState.memwb = EmptyMemwb;
 		if (((cycle-3) >= 0 && (cycle-3) < numOfIn+numStalls) && strcmp(instructions[cycle-3].inst,"NOOP") != 0){
 			newState.memwb.instruction = instructions[cycle-3].inst;
-			//newState.memwb.wrDatMem = ;
+			// should only be updated when data memory is accessed
+			if (strncmp(instructions[cycle-3].inst,"lw",2) == 0)
+				newState.memwb.wrDatMem = dataMem[(aluRes(instructions[cycle-3],regFile)-numOfIn*4)/4];
 			newState.memwb.wrDatALU = aluRes(instructions[cycle-3],regFile);
 			strcpy(newState.memwb.wrReg,findWrReg(instructions[cycle-3]));
 			memDataUpdate(instructions[cycle-4],regFile,dataMem,numOfIn);	// updates the data memory
@@ -162,15 +164,26 @@ int main(){
 		prevState = newState;
 		pc += 4;
 
-		if (cycle > 17)
+		if (i > 17)		// remember to delete later
 			break;
 	}
+	printf("********************\n");
+	printf("Total number of cycles executed: %d\n",i);
+	printf("Total number of stalls: %d\n", numStalls);
+	printf("Total number of branches: %d\n", numBranches);
+	printf("Total number of mispredicted branches: %d\n", numMisBranches);
 	
 	return 0;
 }// end main
 
-int isHazard(struct Instr* inst, int cycle){	// returns 1 if true and 0 if false
-	
+int isHazard(struct Instr subject, struct Instr test1, struct Instr test2){	// 0 if false and a different int depending on the type of hazard
+	if (subject.funct == 32 || subject.funct == 34 || subject.op == 5){	// if the instruction is add,sub,or bne
+		// deal with the fact that there is two source registers (rs and rt for all instructions)
+		return 1;
+	}
+	else if (subject.srcReg /*WAS HERE*/){
+		
+	}
 	return 0;
 }
 
@@ -251,29 +264,29 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 					sprintf(inst[i].inst,"add %s,%s,%s",rd,rs,rt);
 				else if(inst[i].funct == 34)
 					sprintf(inst[i].inst,"sub %s,%s,%s",rd,rs,rt);
-				else if(inst[i].funct == 0)
+				else if(inst[i].funct == 0){
 					sprintf(inst[i].inst,"sll %s,%s,%d",rd,rt,inst[i].shamt);
-				sprintf(inst[i].targReg,"%s","rd");
+					inst[i].srcReg = inst[i].rt;
+				}
 				break;
 			case 35:
 				sprintf(inst[i].inst,"lw %s,%d(%s)",rt,inst[i].imm,rs);
-				sprintf(inst[i].targReg,"%s","rt");
+				inst[i].srcReg = inst[i].rs;
 				break;
 			case 43:
 				sprintf(inst[i].inst,"sw %s,%d(%s)",rt,inst[i].imm,rs);
-				sprintf(inst[i].targReg,"%s","0");	// bc it has no target registers
+				inst[i].srcReg = inst[i].rs;
 				break;
 			case 12:
 				sprintf(inst[i].inst,"andi %s,%s,%d",rt,rs,inst[i].imm);
-				sprintf(inst[i].targReg,"%s","rt");
+				inst[i].srcReg = inst[i].rs;
 				break;
 			case 13:
 				sprintf(inst[i].inst,"ori %s,%s,%d",rt,rs,inst[i].imm);
-				sprintf(inst[i].targReg,"%s","rt");
+				inst[i].srcReg = inst[i].rs;
 				break;
 			case 5:
 				sprintf(inst[i].inst,"bne %s,%s,%s",rs,rt,inst[i].imm);
-				sprintf(inst[i].targReg,"%s","0");	// bc it has no target registers
 				break;
 		}
 		// assigning instruction types
