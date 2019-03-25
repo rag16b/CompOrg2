@@ -12,7 +12,7 @@
 
 // STRUCTURE DEFINITIONS -----------------------------------------------------------------
 struct Instr{char type; int op; int rs; int rt; int rd; int shamt; 
-	     int funct; int imm; char inst[100]; int srcReg;};
+	     int funct; int imm; char inst[100]; int aluRes; int srcReg;};
 // pipeline register structures
 struct IfId{char *instruction; int pcPlus4;};
 struct IdEx{char *instruction; int pcPlus4; int branchTarg;
@@ -104,25 +104,32 @@ int main(){
 	int numMisBranches = 0;
 	while (halt == 0){
 		printCycle(pc,dataMem,regFile,newState,++i);
-		cycle = pc/4;
+		if (pc >= 4)	// I originally had cycle = pc/4 but needed to change this to account for pc not incrementing during a stall
+			cycle++;
 
 		// IF/ID
 		newState.ifid = EmptyIfid;
 		if (cycle < numOfIn+numStalls)
 			newState.ifid.instruction = instructions[cycle].inst;
-		newState.ifid.pcPlus4 = pc + 4;		// trackin pcPlus4, will have to change when dealing with hazards
+		newState.ifid.pcPlus4 = pc + 4;		// tracking pcPlus4, will have to change when dealing with hazards
 		// ID/EX
 		newState.idex = EmptyIdex;
+		newState.idex.pcPlus4 = pc;
 		if ((cycle-1) >= 0 && (cycle-1) < numOfIn+numStalls){
+			// execution stage (accessing the alu)
+			instructions[cycle-1].aluRes = aluRes(instructions[cycle-1],regFile);
 			// DEALING WITH STALLS (testing a specific instruciton in test case 1 currently)
-			if (strncmp(instructions[cycle-2].inst,"lw",2) == 0 && instructions[cycle-2].rt == 9/*&& isHazard(instructions[cycle-1],instructions[cycle-2],instructions[cycle-3]) == 1*/){
-				printf("Got Here\n");
+			printf("%d\n",isHazard(instructions[cycle-2],instructions[cycle-3],instructions[cycle-4]));
+			if ((cycle-4) >= 0 && (strncmp(instructions[cycle-2].inst,"lw",2) == 0 && isHazard(instructions[cycle-2],instructions[cycle-3],instructions[cycle-4]) == 1/*something*/)){
 				stall(instructions,EmptyInstr,cycle,numOfIn+(numStalls++));
+				pc -= 4;	// to make sure pc doesn't change during a stall
+				newState.ifid.pcPlus4 = pc + 4;		// need to recalculate bc PC changed
 			}// end stall handling
 			newState.idex.instruction = instructions[cycle-1].inst;
 			newState.idex.rData1 = regFile[instructions[cycle-1].rs];
 			newState.idex.rData2 = regFile[instructions[cycle-1].rt];
 			newState.idex.imm = instructions[cycle-1].imm;
+			// dealing with what is printed with halt and noop
 			if (strcmp(instructions[cycle-1].inst,"halt") != 0 && strcmp(instructions[cycle-1].inst,"NOOP") != 0){
 				strcpy(newState.idex.rs,findRegName(instructions[cycle-1].rs));
 				strcpy(newState.idex.rt,findRegName(instructions[cycle-1].rt));
@@ -130,9 +137,8 @@ int main(){
 				if (strncmp(instructions[i-1].inst,"add",3) == 0 || strncmp(instructions[cycle-1].inst,"sub",3) == 0)
 					strcpy(newState.idex.rd,findRegName(instructions[cycle-1].rd));
 			}
+			newState.idex.branchTarg = ((instructions[cycle-1].imm*4) + newState.idex.pcPlus4);
 		}
-		newState.idex.pcPlus4 = pc;
-		newState.idex.branchTarg = ((instructions[cycle-1].imm*4) + newState.idex.pcPlus4);
 		// EX/MEM
 		newState.exmem = EmptyExmem;
 		if (((cycle-2) >= 0 && (cycle-2) < numOfIn+numStalls) && strcmp(instructions[cycle-2].inst,"NOOP") != 0){
@@ -163,8 +169,9 @@ int main(){
 			printCycle(pc,dataMem,regFile,newState,++i);
 		prevState = newState;
 		pc += 4;
+		//cycle = pc/4;
 
-		if (i > 17)		// remember to delete later
+		if (i > 17)		// remember to delete later (only added to make sure infinite loops can be stopped and diagnosed)
 			break;
 	}
 	printf("********************\n");
@@ -201,11 +208,11 @@ void memDataUpdate(struct Instr inst, int* regFile, int* dataMem, int numOfIn){
 
 void regFileUpdate(struct Instr inst, int* regFile, int* dataMem, int numOfIn){
 	if (strncmp(inst.inst,"add",3) == 0 || strncmp(inst.inst,"sub",3) == 0 || strncmp(inst.inst,"sll",3) == 0)
-		regFile[inst.rd] = aluRes(inst,regFile);
+		regFile[inst.rd] = inst.aluRes;//aluRes(inst,regFile);
 	if (strncmp(inst.inst,"andi",4) == 0 || strncmp(inst.inst,"ori",3) == 0)
-		regFile[inst.rt] = aluRes(inst,regFile);
+		regFile[inst.rt] = inst.aluRes;//aluRes(inst,regFile);
 	if (strncmp(inst.inst,"lw",2) == 0)
-		regFile[inst.rt] = dataMem[(aluRes(inst,regFile)-numOfIn*4)/4];
+		regFile[inst.rt] = inst.aluRes;//dataMem[(aluRes(inst,regFile)-numOfIn*4)/4];
 }
 
 int aluRes(struct Instr inst, int* regFile){
