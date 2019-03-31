@@ -11,8 +11,8 @@
 #include <string.h>
 
 // STRUCTURE DEFINITIONS -----------------------------------------------------------------
-struct Instr{char type; int op; int rs; int rt; int rd; int shamt; 
-	     int funct; int imm; char inst[100]; int aluRes; int srcReg;};
+struct Instr{char type; int op; int rs; int rt; int rd; int shamt; int funct; 
+	     int imm; char inst[100]; int aluRes; int srcReg; int destReg;};
 // pipeline register structures
 struct IfId{char *instruction; int pcPlus4;};
 struct IdEx{char *instruction; int pcPlus4; int branchTarg;
@@ -34,6 +34,7 @@ void regFileUpdate(struct Instr,int*,int*,int);		// helper to actually execute a
 void memDataUpdate(struct Instr,int*,int*,int);		// helper to deal with updates to data memory (really only affects teh sw instruction)
 void stall(struct Instr*,struct Instr,int,int);		// injects a stall at the given location in the instruction array
 int isHazard(struct Instr,struct Instr,struct Instr);	// helper that returns 1 if true and 0 if false
+int needStall(struct Instr,struct Instr);		// helper that returns 1 if true and 0 if false
 
 int main(){
 	// used to reset state when necessary
@@ -50,7 +51,7 @@ int main(){
 	int regFile[32];		// holds register values
 	int machInstr[100];
 	int dataWords[32];
-	struct Instr instructions[500];	// 500 becuase stalls (I know it's less but I'm not doing the math)
+	struct Instr instructions[500];	// 500 to account for stalls (I know it's less but I'm not doing the math)
 		int i;
 		for(i = 0; i < 100; i++)
 			instructions[i] = EmptyInstr;
@@ -102,6 +103,9 @@ int main(){
 	int numStalls = 0;
 	int numBranches = 0;
 	int numMisBranches = 0;
+	struct Instr subject;	// subject, test1, and test2 are just substitutions for when I am handling forwarding
+	struct Instr test1;
+	struct Instr test2;
 	while (halt == 0){
 		printCycle(pc,dataMem,regFile,newState,++i);
 		if (pc >= 4)	// I originally had cycle = pc/4 but needed to change this to account for pc not incrementing during a stall
@@ -115,16 +119,54 @@ int main(){
 		// ID/EX
 		newState.idex = EmptyIdex;
 		newState.idex.pcPlus4 = pc;
+		subject = instructions[cycle-2];
+		test1 = instructions[cycle-3];
+		test2 = instructions[cycle-4];
 		if ((cycle-1) >= 0 && (cycle-1) < numOfIn+numStalls){
 			// execution stage (accessing the alu)
 			instructions[cycle-1].aluRes = aluRes(instructions[cycle-1],regFile);
-			// DEALING WITH STALLS (testing a specific instruciton in test case 1 currently)
+			//  printing for testing purposes
 			printf("%d\n",isHazard(instructions[cycle-2],instructions[cycle-3],instructions[cycle-4]));
-			if ((cycle-4) >= 0 && (strncmp(instructions[cycle-2].inst,"lw",2) == 0 && isHazard(instructions[cycle-2],instructions[cycle-3],instructions[cycle-4]) == 1/*something*/)){
-				stall(instructions,EmptyInstr,cycle,numOfIn+(numStalls++));
-				pc -= 4;	// to make sure pc doesn't change during a stall
-				newState.ifid.pcPlus4 = pc + 4;		// need to recalculate bc PC changed
+			// DEALING WITH STALLS (testing a specific instruciton in test case 1 currently)
+			printf("%s %s\n",instructions[cycle-1].inst,subject.inst);
+			if ((cycle-2) >= 0 && strncmp(instructions[cycle-2].inst,"lw",2) == 0 && needStall(subject,instructions[cycle-1]) == 1){
+					stall(instructions,EmptyInstr,cycle,numOfIn+(numStalls++));
+					pc -= 4;	// to make sure pc doesn't change during a stall
+					newState.ifid.pcPlus4 = pc + 4;		// need to recalculate bc PC changed
 			}// end stall handling
+
+
+
+			/*// DEALING WITH FORWARDING HERE (change aluRes ^ like up there depending on the return of isHazard)
+			// if the instruction is lw, sw, sll, andi, or ori (will have one source register)
+			if (subject.op == 35 || subject.op == 43 || (subject.op == 0 && subject.funct == 0) || subject.op == 12 || subject.op == 13){
+				if (subject.srcReg == test2.destReg)	// if source is equal to target of current MEM/WB instruction
+					return 1;
+				else if (subject.srcReg == test1.destReg)	// if source is equal to target of current EX/MEM instruction
+					return 2;
+			}
+			else{	// if the instruction is add,sub,or bne (will have two source registers)
+			// deal with the fact that there is two source registers (rs and rt for all instructions)
+				if (subject.rs == test2.destReg && subject.rt == test1.destReg)
+					return 3;
+				else if (subject.rt == test2.destReg && subject.rs == test1.destReg)
+					return 4;
+				else if (subject.rs == test2.destReg && subject.rt != test1.destReg && (cycle-4) >= 0)
+					return 5;	// set subject.rs = destReg of curr MEM/WB instruction
+				else if (subject.rs != test2.destReg && subject.rt == test1.destReg)
+					return 6;	// set subject.rt = destReg of curr EX/MEM instruction
+				else if (subject.rt == test2.destReg && subject.rs != test1.destReg && (cycle-4) >= 0)
+					return 7;	// set subject.rt = destReg of curr MEM/WB instruction
+				else if (subject.rt != test2.destReg && subject.rs == test1.destReg)
+					return 8;	// set subject.rs = destReg of curr EX/MEM instruction
+				else if (subject.rs == test2.destReg && subject.rt == test2.destReg && (cycle-4) >= 0)	// if the source registers of the subject instruction are equivalent and equal to the instruction at MEM/WB
+					return 9;	// set subject.rs AND subject.rt = destReg of curr MEM/WB instruction
+				else if (subject.rs == test1.destReg && subject.rt == test1.destReg) // if the source registers are equal to the EX/MEM instructions dest reg and to each other
+					return 10;	// set subject.rs AND subject.rt = destReg of curr EX/MEM instruction
+			}// end forward handling
+			*/
+
+
 			newState.idex.instruction = instructions[cycle-1].inst;
 			newState.idex.rData1 = regFile[instructions[cycle-1].rs];
 			newState.idex.rData2 = regFile[instructions[cycle-1].rt];
@@ -144,7 +186,7 @@ int main(){
 		if (((cycle-2) >= 0 && (cycle-2) < numOfIn+numStalls) && strcmp(instructions[cycle-2].inst,"NOOP") != 0){
 			newState.exmem.instruction = instructions[cycle-2].inst;
 			newState.exmem.aluRes = aluRes(instructions[cycle-2],regFile);
-			//newState.exmem.wrDatReg = ;
+			newState.exmem.wrDatReg = instructions[cycle-2].rt;			// CHECK AFTER FINISHING PIPELINING
 			strcpy(newState.exmem.wrReg,findWrReg(instructions[cycle-2]));
 		}
 		// MEM/WB
@@ -183,13 +225,44 @@ int main(){
 	return 0;
 }// end main
 
-int isHazard(struct Instr subject, struct Instr test1, struct Instr test2){	// 0 if false and a different int depending on the type of hazard
-	if (subject.funct == 32 || subject.funct == 34 || subject.op == 5){	// if the instruction is add,sub,or bne
-		// deal with the fact that there is two source registers (rs and rt for all instructions)
-		return 1;
+int needStall(struct Instr subject, struct Instr test1){
+	if (test1.op == 35 || test1.op == 43 || (test1.op == 0 && test1.funct == 0) || test1.op == 12 || test1.op == 13){
+		if (subject.destReg == test1.srcReg)
+			return 1;
 	}
-	else if (subject.srcReg /*WAS HERE*/){
-		
+	else{
+		if (subject.destReg == test1.rs || subject.destReg == test1.rt)
+			return 1;
+	}
+	return 0;
+}
+
+int isHazard(struct Instr subject, struct Instr test1, struct Instr test2){	// 0 if false and a different int depending on the type of hazard
+	// if the instruction is lw, sw, sll, andi, or ori (will have one source register)
+	if (subject.op == 35 || subject.op == 43 || (subject.op == 0 && subject.funct == 0) || subject.op == 12 || subject.op == 13){
+		if (subject.srcReg == test2.destReg)	// if source is equal to target of current MEM/WB instruction
+			return 1;
+		else if (subject.srcReg == test1.destReg)	// if source is equal to target of current EX/MEM instruction
+			return 2;
+	}
+	else{	// if the instruction is add,sub,or bne (will have two source registers)
+	// deal with the fact that there is two source registers (rs and rt for all instructions)
+		if (subject.rs == test2.destReg && subject.rt == test1.destReg)
+			return 3;
+		else if (subject.rt == test2.destReg && subject.rs == test1.destReg)
+			return 4;
+		else if (subject.rs == test2.destReg && subject.rt != test1.destReg /*&& numOfIn >= 4*/)
+			return 5;	// set subject.rs = destReg of curr MEM/WB instruction
+		else if (subject.rs != test2.destReg && subject.rt == test1.destReg)
+			return 6;	// set subject.rt = destReg of curr EX/MEM instruction
+		else if (subject.rt == test2.destReg && subject.rs != test1.destReg /*&& numOfIn >= 4*/)
+			return 7;	// set subject.rt = destReg of curr MEM/WB instruction
+		else if (subject.rt != test2.destReg && subject.rs == test1.destReg)
+			return 8;	// set subject.rs = destReg of curr EX/MEM instruction
+		else if (subject.rs == test2.destReg && subject.rt == test2.destReg /*&& numOfIn >= 4*/)	// if the source registers of the subject instruction are equivalent and equal to the instruction at MEM/WB
+			return 9;	// set subject.rs AND subject.rt = destReg of curr MEM/WB instruction
+		else if (subject.rs == test1.destReg && subject.rt == test1.destReg) // if the source registers are equal to the EX/MEM instructions dest reg and to each other
+			return 10;	// set subject.rs AND subject.rt = destReg of curr EX/MEM instruction
 	}
 	return 0;
 }
@@ -275,22 +348,27 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 					sprintf(inst[i].inst,"sll %s,%s,%d",rd,rt,inst[i].shamt);
 					inst[i].srcReg = inst[i].rt;
 				}
+				inst[i].destReg = inst[i].rd;
 				break;
 			case 35:
 				sprintf(inst[i].inst,"lw %s,%d(%s)",rt,inst[i].imm,rs);
 				inst[i].srcReg = inst[i].rs;
+				inst[i].destReg = inst[i].rt;
 				break;
 			case 43:
 				sprintf(inst[i].inst,"sw %s,%d(%s)",rt,inst[i].imm,rs);
 				inst[i].srcReg = inst[i].rs;
+				inst[i].destReg = inst[i].rt;
 				break;
 			case 12:
 				sprintf(inst[i].inst,"andi %s,%s,%d",rt,rs,inst[i].imm);
 				inst[i].srcReg = inst[i].rs;
+				inst[i].destReg = inst[i].rt;
 				break;
 			case 13:
 				sprintf(inst[i].inst,"ori %s,%s,%d",rt,rs,inst[i].imm);
 				inst[i].srcReg = inst[i].rs;
+				inst[i].destReg = inst[i].rt;
 				break;
 			case 5:
 				sprintf(inst[i].inst,"bne %s,%s,%s",rs,rt,inst[i].imm);
