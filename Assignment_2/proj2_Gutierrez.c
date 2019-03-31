@@ -123,49 +123,55 @@ int main(){
 		test1 = instructions[cycle-3];
 		test2 = instructions[cycle-4];
 		if ((cycle-1) >= 0 && (cycle-1) < numOfIn+numStalls){
+
+
+
+			// DEALING WITH FORWARDING HERE (change aluRes ^ like up there depending on the return of isHazard)
+			// if the instruction is lw, sw, sll, andi, or ori (will have one source register)
+			if (subject.op == 35 || subject.op == 43 || (subject.op == 0 && subject.funct == 0) || subject.op == 12 || subject.op == 13){
+				if (subject.srcReg == test2.destReg)	// if source is equal to target of current MEM/WB instruction
+					instructions[cycle-1].srcReg = test2.destReg;
+				else if (subject.srcReg == test1.destReg)	// if source is equal to target of current EX/MEM instruction
+					instructions[cycle-1].srcReg = test1.destReg;
+			}
+			else{	// if the instruction is add,sub,or bne (will have two source registers)
+			// deal with the fact that there is two source registers (rs and rt for all instructions)
+				if (subject.rs == test2.destReg && subject.rt == test1.destReg){
+					instructions[cycle-1].rs = test2.destReg;
+					instructions[cycle-1].rt = test1.destReg;
+				}					
+				else if (subject.rt == test2.destReg && subject.rs == test1.destReg){
+					instructions[cycle-1].rt = test2.destReg;
+					instructions[cycle-1].rs = test1.destReg;
+				}
+				else if (subject.rs == test2.destReg && subject.rt != test1.destReg && (cycle-4) >= 0)
+					instructions[cycle-1].rs = test2.destReg;	// set subject.rs = destReg of curr MEM/WB instruction
+				else if (subject.rs != test2.destReg && subject.rt == test1.destReg)
+					instructions[cycle-1].rt = test1.destReg;	// set subject.rt = destReg of curr EX/MEM instruction
+				else if (subject.rt == test2.destReg && subject.rs != test1.destReg && (cycle-4) >= 0)
+					instructions[cycle-1].rt = test2.destReg;	// set subject.rt = destReg of curr MEM/WB instruction
+				else if (subject.rt != test2.destReg && subject.rs == test1.destReg)
+					instructions[cycle-1].rs = test1.destReg;	// set subject.rs = destReg of curr EX/MEM instruction
+				else if (subject.rs == test2.destReg && subject.rt == test2.destReg && (cycle-4) >= 0){	// if the source registers of the subject instruction are equivalent and equal to the instruction at MEM/WB
+					instructions[cycle-1].rs = test2.destReg;	// set subject.rs AND subject.rt = destReg of curr MEM/WB instruction
+					instructions[cycle-1].rt = test2.destReg;
+				}
+				else if (subject.rs == test1.destReg && subject.rt == test1.destReg){ // if the source registers are equal to the EX/MEM instructions dest reg and to each other
+					instructions[cycle-1].rs = test1.destReg;	// set subject.rs AND subject.rt = destReg of curr EX/MEM instruction
+					instructions[cycle-1].rt = test1.destReg;
+				}
+			}// end forward handling
+
+
+
 			// execution stage (accessing the alu)
 			instructions[cycle-1].aluRes = aluRes(instructions[cycle-1],regFile);
-			//  printing for testing purposes
-			printf("%d\n",isHazard(instructions[cycle-2],instructions[cycle-3],instructions[cycle-4]));
 			// DEALING WITH STALLS (testing a specific instruciton in test case 1 currently)
-			printf("%s %s\n",instructions[cycle-1].inst,subject.inst);
 			if ((cycle-2) >= 0 && strncmp(instructions[cycle-2].inst,"lw",2) == 0 && needStall(subject,instructions[cycle-1]) == 1){
 					stall(instructions,EmptyInstr,cycle,numOfIn+(numStalls++));
 					pc -= 4;	// to make sure pc doesn't change during a stall
 					newState.ifid.pcPlus4 = pc + 4;		// need to recalculate bc PC changed
 			}// end stall handling
-
-
-
-			/*// DEALING WITH FORWARDING HERE (change aluRes ^ like up there depending on the return of isHazard)
-			// if the instruction is lw, sw, sll, andi, or ori (will have one source register)
-			if (subject.op == 35 || subject.op == 43 || (subject.op == 0 && subject.funct == 0) || subject.op == 12 || subject.op == 13){
-				if (subject.srcReg == test2.destReg)	// if source is equal to target of current MEM/WB instruction
-					return 1;
-				else if (subject.srcReg == test1.destReg)	// if source is equal to target of current EX/MEM instruction
-					return 2;
-			}
-			else{	// if the instruction is add,sub,or bne (will have two source registers)
-			// deal with the fact that there is two source registers (rs and rt for all instructions)
-				if (subject.rs == test2.destReg && subject.rt == test1.destReg)
-					return 3;
-				else if (subject.rt == test2.destReg && subject.rs == test1.destReg)
-					return 4;
-				else if (subject.rs == test2.destReg && subject.rt != test1.destReg && (cycle-4) >= 0)
-					return 5;	// set subject.rs = destReg of curr MEM/WB instruction
-				else if (subject.rs != test2.destReg && subject.rt == test1.destReg)
-					return 6;	// set subject.rt = destReg of curr EX/MEM instruction
-				else if (subject.rt == test2.destReg && subject.rs != test1.destReg && (cycle-4) >= 0)
-					return 7;	// set subject.rt = destReg of curr MEM/WB instruction
-				else if (subject.rt != test2.destReg && subject.rs == test1.destReg)
-					return 8;	// set subject.rs = destReg of curr EX/MEM instruction
-				else if (subject.rs == test2.destReg && subject.rt == test2.destReg && (cycle-4) >= 0)	// if the source registers of the subject instruction are equivalent and equal to the instruction at MEM/WB
-					return 9;	// set subject.rs AND subject.rt = destReg of curr MEM/WB instruction
-				else if (subject.rs == test1.destReg && subject.rt == test1.destReg) // if the source registers are equal to the EX/MEM instructions dest reg and to each other
-					return 10;	// set subject.rs AND subject.rt = destReg of curr EX/MEM instruction
-			}// end forward handling
-			*/
-
 
 			newState.idex.instruction = instructions[cycle-1].inst;
 			newState.idex.rData1 = regFile[instructions[cycle-1].rs];
@@ -288,7 +294,7 @@ void regFileUpdate(struct Instr inst, int* regFile, int* dataMem, int numOfIn){
 		regFile[inst.rt] = inst.aluRes;//dataMem[(aluRes(inst,regFile)-numOfIn*4)/4];
 }
 
-int aluRes(struct Instr inst, int* regFile){
+int aluRes(struct Instr inst, int* regFile){		// ********** MUST ALTER THE WAY ALURES WORKS TO ACCOMADATE FORWARDING (INSTEAD OF GRABBING FROM REGFILE, GRAB FROM SOMETHING ELSE) **********
 	int result;		// **********NEED TO GET regFile ELEMENT AT EVERY GIVEN REGISTER
 	if (strncmp(inst.inst,"add",3) == 0)
 		result = regFile[inst.rs] + regFile[inst.rt];
