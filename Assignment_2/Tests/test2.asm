@@ -1,5 +1,5 @@
 	.text
-	ori	$s0,$0,24
+	ori	$s0,$0,44
 	lw	$t1,0($s0)
 	bne	$t5,$t6,LOOP
 	sub	$t2,$t0,$t1

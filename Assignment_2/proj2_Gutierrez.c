@@ -4,7 +4,9 @@
 // CDA3101
 // Pipeline Simulator
 
-// Potential problems:
+// Potential problems:	-writeDataReg not calculated correctly
+//			-Branch target is not calculated correctly for add, sll, or sub
+//			-aluRes for sub is not calculated correctly (seems like Forwarding.exe got it wrong too)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,8 +14,7 @@
 
 // STRUCTURE DEFINITIONS -----------------------------------------------------------------
 struct Instr{char type; int op; int rs; int rt; int rd; int shamt; int funct; 
-	     int imm; char inst[100]; int aluRes; int srcReg; int destReg;
-	     int rsCont; int rtCont;};
+	     int imm; char inst[100]; int aluRes; int srcReg; int destReg; int destCont;};
 // pipeline register structures
 struct IfId{char *instruction; int pcPlus4;};
 struct IdEx{char *instruction; int pcPlus4; int branchTarg;
@@ -35,7 +36,7 @@ void regFileUpdate(struct Instr,int*,int*,int);		// helper to actually execute a
 void memDataUpdate(struct Instr,int*,int*,int);		// helper to deal with updates to data memory (really only affects teh sw instruction)
 void stall(struct Instr*,struct Instr,int,int);		// injects a stall at the given location in the instruction array
 int needStall(struct Instr,struct Instr);		// helper that returns 1 if true and 0 if false
-int isHazard(struct Instr,struct Instr,struct Instr,int);	// helper to determine if there is a hazard
+int isHazard(struct Instr,struct Instr,struct Instr,int);	// helper to determine if there is a hazard (returns -1 if false, 0-9 otherwise)
 
 int main(){
 	// used to reset state when necessary
@@ -116,13 +117,17 @@ int main(){
 		newState.ifid = EmptyIfid;
 		if (cycle < numOfIn+numStalls)
 			newState.ifid.instruction = instructions[cycle].inst;
-		newState.ifid.pcPlus4 = pc + 4;		// tracking pcPlus4, will have to change when dealing with hazards
+		newState.ifid.pcPlus4 = pc + 4;		// tracking pcPlus4
 		// ID/EX
 		newState.idex = EmptyIdex;
 		newState.idex.pcPlus4 = pc;
 		if ((cycle-1) >= 0 && (cycle-1) < numOfIn+numStalls){
-			// execution stage (accessing the alu
+			// execution stage (accessing the alu)
 			instructions[cycle-1].aluRes = aluRes(instructions[cycle-1],instructions[cycle-2],instructions[cycle-3],regFile,dataMem,numOfIn,cycle);
+				// need to do this bc of load word (aluRes != contents of destination register for lw)
+				instructions[cycle-1].destCont = instructions[cycle-1].aluRes;
+				if (strncmp(instructions[cycle-1].inst,"lw",2) == 0)
+					instructions[cycle-1].destCont = dataMem[((regFile[instructions[cycle-1].rs] + instructions[cycle-1].imm)-numOfIn*4)/4];
 			// DEALING WITH STALLS (testing a specific instruciton in test case 1 currently)
 			if ((cycle-2) >= 0 && strncmp(instructions[cycle-2].inst,"lw",2) == 0 && needStall(instructions[cycle-2],instructions[cycle-1]) == 1){
 					stall(instructions,EmptyInstr,cycle,numOfIn+(numStalls++));
@@ -133,13 +138,16 @@ int main(){
 			newState.idex.rData1 = regFile[instructions[cycle-1].rs];
 			newState.idex.rData2 = regFile[instructions[cycle-1].rt];
 			newState.idex.imm = instructions[cycle-1].imm;
-			// dealing with what is printed with halt and noop
+			// dealing with what is printed with halt and noop (specifically, this handles telling the differenece between '$0' and '0' in printing the ID/EX section)
 			if (strcmp(instructions[cycle-1].inst,"halt") != 0 && strcmp(instructions[cycle-1].inst,"NOOP") != 0){
 				strcpy(newState.idex.rs,findRegName(instructions[cycle-1].rs));
 				strcpy(newState.idex.rt,findRegName(instructions[cycle-1].rt));
-				// to make sure rd reads "0" or "$0" when it should
-				if (strncmp(instructions[i-1].inst,"add",3) == 0 || strncmp(instructions[cycle-1].inst,"sub",3) == 0)
-					strcpy(newState.idex.rd,findRegName(instructions[cycle-1].rd));
+				// to make sure rd and rs read "0" or "$0" when they should
+				if (strncmp(instructions[cycle-1].inst,"add",3) == 0 || strncmp(instructions[cycle-1].inst,"sub",3) == 0 || strncmp(instructions[cycle-1].inst,"sll",3) == 0){
+					if (strncmp(instructions[cycle-1].inst,"sll",3) == 0)
+						strcpy(newState.idex.rs,"0");		// updating rt
+					strcpy(newState.idex.rd,findRegName(instructions[cycle-1].rd));		// updating rd
+				}
 			}
 			newState.idex.branchTarg = ((instructions[cycle-1].imm*4) + newState.idex.pcPlus4);
 		}
@@ -147,7 +155,7 @@ int main(){
 		newState.exmem = EmptyExmem;
 		if (((cycle-2) >= 0 && (cycle-2) < numOfIn+numStalls) && strcmp(instructions[cycle-2].inst,"NOOP") != 0){
 			newState.exmem.instruction = instructions[cycle-2].inst;
-			newState.exmem.aluRes = instructions[cycle-2].aluRes;//aluRes(instructions[cycle-2],regFile);						// ****************************************************
+			newState.exmem.aluRes = instructions[cycle-2].aluRes;
 			newState.exmem.wrDatReg = instructions[cycle-2].rt;			// CHECK AFTER FINISHING PIPELINING
 			strcpy(newState.exmem.wrReg,findWrReg(instructions[cycle-2]));
 		}
@@ -155,24 +163,21 @@ int main(){
 		newState.memwb = EmptyMemwb;
 		if (((cycle-3) >= 0 && (cycle-3) < numOfIn+numStalls) && strcmp(instructions[cycle-3].inst,"NOOP") != 0){
 			newState.memwb.instruction = instructions[cycle-3].inst;
-			// should only be updated when data memory is accessed
+			// should only be updated when data memory is accessed (STILL CANNOT TELL WHAT THE KECJ THIS DOES*********************)
 			if (strncmp(instructions[cycle-3].inst,"lw",2) == 0)
-				newState.memwb.wrDatMem = dataMem[(prevState.exmem.aluRes/*aluRes(instructions[cycle-3],regFile)*/-numOfIn*4)/4];	// ****************************************************
-			newState.memwb.wrDatALU = prevState.exmem.aluRes;//aluRes(instructions[cycle-3],regFile);
+				newState.memwb.wrDatMem = dataMem[(prevState.exmem.aluRes-numOfIn*4)/4];
+			newState.memwb.wrDatALU = prevState.exmem.aluRes;
 			strcpy(newState.memwb.wrReg,findWrReg(instructions[cycle-3]));
-			memDataUpdate(instructions[cycle-4],regFile,dataMem,numOfIn);	// updates the data memory
+			memDataUpdate(instructions[cycle-4],regFile,dataMem,numOfIn);	// updates the data memory********************
 			
 			if (strcmp(instructions[cycle-3].inst,"halt") == 0)
 				halt = 1;
 		}
 
-		if (halt == 1)		// print the last cycle
-			printCycle(pc,dataMem,regFile,newState,++i);
 		prevState = newState;
 		pc += 4;
-
-		if (i > 17)		// remember to delete later (only added to make sure infinite loops can be stopped and diagnosed)
-			break;
+		if (halt == 1)		// print the last cycle
+			printCycle(pc,dataMem,regFile,newState,++i);
 	}
 	printf("********************\n");
 	printf("Total number of cycles executed: %d\n",i);
@@ -183,8 +188,9 @@ int main(){
 	return 0;
 }// end main
 
+// when the load word instruction is immediately followed by another instruction which reads load words destination register, return true (1 in this case)
 int needStall(struct Instr subject, struct Instr test1){
-	if (test1.op == 35 || test1.op == 43 || (test1.op == 0 && test1.funct == 0) || test1.op == 12 || test1.op == 13){
+	if (test1.op == 35){
 		if (subject.destReg == test1.srcReg)
 			return 1;
 	}
@@ -195,6 +201,7 @@ int needStall(struct Instr subject, struct Instr test1){
 	return 0;
 }
 
+// shifts over all contents in the intruction array and sticks a noop into the freed space in the middle
 void stall(struct Instr* inst, struct Instr empty, int pos, int numOfIn){
 	int i;
 	for (i = numOfIn-1; i >= pos-1; i--)
@@ -202,22 +209,25 @@ void stall(struct Instr* inst, struct Instr empty, int pos, int numOfIn){
 	inst[pos-1] = empty;
 }
 
+// updates the memData integer array
 void memDataUpdate(struct Instr inst, int* regFile, int* dataMem, int numOfIn){
 	if (strncmp(inst.inst,"sw",2) == 0)
 		dataMem[(inst.aluRes-numOfIn*4)/4] = regFile[inst.rt];
 }
 
+// updates the register file integer array
 void regFileUpdate(struct Instr inst, int* regFile, int* dataMem, int numOfIn){
 	if (strncmp(inst.inst,"add",3) == 0 || strncmp(inst.inst,"sub",3) == 0 || strncmp(inst.inst,"sll",3) == 0)
-		regFile[inst.rd] = inst.aluRes;//aluRes(inst,regFile);
+		regFile[inst.rd] = inst.aluRes;
 	if (strncmp(inst.inst,"andi",4) == 0 || strncmp(inst.inst,"ori",3) == 0)
-		regFile[inst.rt] = inst.aluRes;//aluRes(inst,regFile);
+		regFile[inst.rt] = inst.aluRes;
 	if (strncmp(inst.inst,"lw",2) == 0)
-		regFile[inst.rt] = inst.aluRes;//dataMem[(inst.aluRes-numOfIn*4)/4];//dataMem[(aluRes(inst,regFile)-numOfIn*4)/4];
+		regFile[inst.rt] = dataMem[(inst.aluRes-numOfIn*4)/4];
 }
 
+// determines if there is a hazard based on given instructions (returns -1 if false, 0-9 if true).
 int isHazard(struct Instr subject, struct Instr test1, struct Instr test2, int cycle){
-	if (cycle > 1){		// *** check to make sure i am not missing an instruction
+	if (cycle > 1){
 		// if the instruction is lw, sw, sll, andi, or ori (will have one source register)
 		if (subject.op == 35 || subject.op == 43 || (subject.op == 0 && subject.funct == 0) || subject.op == 12 || subject.op == 13){
 			if (subject.srcReg == test2.destReg)	// if source is equal to target of current MEM/WB instruction
@@ -248,72 +258,77 @@ int isHazard(struct Instr subject, struct Instr test1, struct Instr test2, int c
 	return -1;
 }
 
+// ALU result function that calculates what the alu would produce for a given instruction (also handles pipelining).
 int aluRes(struct Instr inst, struct Instr test1, struct Instr test2, int* regFile, int* dataMem, int numOfIn, int cycle){
 	int result;
 	int rs = regFile[inst.rs];
 	int rt = regFile[inst.rt];
 
+	// printing for testing purposes
 	printf("%d %d %s\n",isHazard(inst,test1,test2,cycle),regFile[8],inst.inst);
 	printf("%d\n",test2.aluRes);
-	if (isHazard(inst,test1,test2,cycle) > -1){
+	if (isHazard(inst,test1,test2,cycle) > -1){		// if there is a hazard... forward appropiately based on cases 0-9
 		switch(isHazard(inst,test1,test2,cycle))
 		{
 			case 0:
 				if (inst.op == 0 && inst.funct == 0)
-					rt = test2.aluRes;
+					rt = test2.destCont;
 				else
-					rs = test2.aluRes;
+					rs = test2.destCont;
 				break;
 			case 1:
 				if (inst.op == 0 && inst.funct == 0)
-					rt = test1.aluRes;
+					rt = test1.destCont;
 				else
-					rs = test1.aluRes;
+					rs = test1.destCont;
 				break;
 			case 2:
-				rs = test2.aluRes;
-				rt = test1.aluRes;
+				rs = test2.destCont;
+				rt = test1.destCont;
 				break;
 			case 3:
-				rs = test1.aluRes;
-				rt = test2.aluRes;
+				rs = test1.destCont;
+				rt = test2.destCont;
 				break;
 			case 4:
-				rs = test2.aluRes;
+				rs = test2.destCont;
 				break;
 			case 5:
-				rt = test1.aluRes;
+				rt = test1.destCont;
 				break;
 			case 6:
-				rt = test2.aluRes;
+				rt = test2.destCont;
 				break;
 			case 7:
-				rs = test1.aluRes;
+				rs = test1.destCont;
 				break;
 			case 8:
-				rs = test2.aluRes;
-				rt = test2.aluRes;
+				rs = test2.destCont;
+				rt = test2.destCont;
 				break;
 			case 9:
-				rs = test1.aluRes;
-				rt = test1.aluRes;
+				rs = test1.destCont;
+				rt = test1.destCont;
 				break;
 		}
 	}
+	// actual ALU calculation depending on the instruction
 	if (strncmp(inst.inst,"add",3) == 0)
 		result = rs + rt;
 	else if(strncmp(inst.inst,"sub",3) == 0)
 		result = rs - rt;
 	else if(strncmp(inst.inst,"lw",2) == 0)
-		result = dataMem[((rs + inst.imm)-numOfIn*4)/4];
+		result = rs + inst.imm;
 	else if( strncmp(inst.inst,"sw",2) == 0)
-		result = rs + inst.imm;		// MAY NEED TO SIGN EXTEND
+		result = rs + inst.imm;
 	else if(strncmp(inst.inst,"sll",3) == 0)
 		result = rt << inst.shamt;
 	else if(strncmp(inst.inst,"andi",4) == 0)
-		result = rs & inst.imm;		// MAY NEED TO ZERO EXTEND LEFT
+		result = rs & inst.imm;
 	else if(strncmp(inst.inst,"ori",3) == 0)
-		result = rs | inst.imm;		// MAY NEED TO ZERO EXTEND LEFT
+		result = rs | inst.imm;
+	else if(strncmp(inst.inst,"bne",3) == 0)
+		result = rs != rt;
 	else if(strcmp(inst.inst,"halt") == 0)
 		result = 0;
 	return result;
@@ -327,11 +342,6 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 	char rd[4];
 	for (i = 0; i < size; i++){
 		currLine = machInstr[i];
-		// handling noops
-		if (currLine == 0)
-			sprintf(inst[i].inst,"NOOP");
-		else if (currLine == 1)
-			sprintf(inst[i].inst,"halt");
 		// handling other instructions
 		inst[i].op = currLine >> 26 & 63;
 		inst[i].rs = (currLine >> 21) & 31;
@@ -382,9 +392,14 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 				inst[i].destReg = inst[i].rt;
 				break;
 			case 5:
-				sprintf(inst[i].inst,"bne %s,%s,%s",rs,rt,inst[i].imm);
+				sprintf(inst[i].inst,"bne %s,%s,%d",rs,rt,inst[i].imm);
 				break;
 		}
+		// handling noops
+		if (currLine == 0)
+			sprintf(inst[i].inst,"NOOP");
+		else if (currLine == 1)
+			sprintf(inst[i].inst,"halt");
 		// assigning instruction types
 		if (inst[i].op == 12 || inst[i].op == 13 || inst[i].op == 5 || inst[i].op == 35 || inst[i].op == 43)
 			inst[i].type = 'i';		// string compares below are to handle noops and halts
@@ -433,6 +448,7 @@ char* findRegName(int reg){
 	return temp;
 }// end findRegName
 
+// prints all the information for one full cycle
 void printCycle(int pc, int *dataMem, int *regFile, struct State state, int cycle){
 	printf("********************\n");
 	printf("State at the beginning of cycle %d\n", cycle);
@@ -443,6 +459,7 @@ void printCycle(int pc, int *dataMem, int *regFile, struct State state, int cycl
 	printMemReg(regFile,1);
 	printState(state);
 }
+
 // prints both Data Memory and Register File, depending on which one I send it
 void printMemReg(int *memReg, int which){
 	char *name;
@@ -466,6 +483,7 @@ void printMemReg(int *memReg, int which){
 	}
 }
 
+// helper function to brute force print all the information for each stage of the pipeline for one cycle
 void printState(struct State state){
 	// IF/ID
 	printf("\tIF/ID:\n\t\tInstruction: %s\n\t\tPCPlus4: %d\n",state.ifid.instruction,state.ifid.pcPlus4);
@@ -481,11 +499,12 @@ void printState(struct State state){
 	printf("\t\twriteDataALU: %d\n\t\twriteReg: %s\n",state.memwb.wrDatALU,state.memwb.wrReg);
 }
 
+// helper to find write register (the thing that prints in the EX/MEM stage)
 char* findWrReg(struct Instr inst){
 	char* temp;
 	if (strncmp(inst.inst,"bne",3) == 0 || strcmp(inst.inst,"halt") == 0)
 		temp = "0";
-	else if (strncmp(inst.inst,"add",3) == 0 || strncmp(inst.inst,"sub",3) == 0)
+	else if (strncmp(inst.inst,"add",3) == 0 || strncmp(inst.inst,"sub",3) == 0 || strncmp(inst.inst,"sll",3) == 0)
 		temp = findRegName(inst.rd);
 	else
 		temp = findRegName(inst.rt);
