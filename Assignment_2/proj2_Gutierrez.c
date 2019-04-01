@@ -4,9 +4,8 @@
 // CDA3101
 // Pipeline Simulator
 
-// Potential problems:	-writeDataReg not calculated correctly
-//			-Branch target is not calculated correctly for add, sll, or sub
-//			-aluRes for sub is not calculated correctly (seems like Forwarding.exe got it wrong too)
+// Potential problems:	(this is for me to remind myself when I come back after not working on the program for a bit)
+			
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -127,7 +126,7 @@ int main(){
 				// need to do this bc of load word (aluRes != contents of destination register for lw)
 				instructions[cycle-1].destCont = instructions[cycle-1].aluRes;
 				if (strncmp(instructions[cycle-1].inst,"lw",2) == 0)
-					instructions[cycle-1].destCont = dataMem[((regFile[instructions[cycle-1].rs] + instructions[cycle-1].imm)-numOfIn*4)/4];
+					instructions[cycle-1].destCont = dataMem[(instructions[cycle-1].aluRes-numOfIn*4)/4];
 			// DEALING WITH STALLS (testing a specific instruciton in test case 1 currently)
 			if ((cycle-2) >= 0 && strncmp(instructions[cycle-2].inst,"lw",2) == 0 && needStall(instructions[cycle-2],instructions[cycle-1]) == 1){
 					stall(instructions,EmptyInstr,cycle,numOfIn+(numStalls++));
@@ -156,7 +155,10 @@ int main(){
 		if (((cycle-2) >= 0 && (cycle-2) < numOfIn+numStalls) && strcmp(instructions[cycle-2].inst,"NOOP") != 0){
 			newState.exmem.instruction = instructions[cycle-2].inst;
 			newState.exmem.aluRes = instructions[cycle-2].aluRes;
-			newState.exmem.wrDatReg = instructions[cycle-2].rt;			// CHECK AFTER FINISHING PIPELINING
+			// updating writeDataReg
+			newState.exmem.wrDatReg = regFile[instructions[cycle-2].rt];			// CHECK AFTER FINISHING PIPELINING
+			if (instructions[cycle-2].rt == instructions[cycle-3].destReg)
+				newState.exmem.wrDatReg = instructions[cycle-3].destCont;
 			strcpy(newState.exmem.wrReg,findWrReg(instructions[cycle-2]));
 		}
 		// MEM/WB
@@ -265,8 +267,9 @@ int aluRes(struct Instr inst, struct Instr test1, struct Instr test2, int* regFi
 	int rt = regFile[inst.rt];
 
 	// printing for testing purposes
-	printf("%d %d %s\n",isHazard(inst,test1,test2,cycle),regFile[8],inst.inst);
-	printf("%d\n",test2.aluRes);
+	//printf("%d %d %s\n",isHazard(inst,test1,test2,cycle),regFile[8],inst.inst);
+	//printf("%d\n",test2.aluRes);
+	//printf("%d %d %d\n",inst.destCont,test1.destCont,test2.destCont);
 	if (isHazard(inst,test1,test2,cycle) > -1){		// if there is a hazard... forward appropiately based on cases 0-9
 		switch(isHazard(inst,test1,test2,cycle))
 		{
