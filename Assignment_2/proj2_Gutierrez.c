@@ -22,6 +22,8 @@ struct ExMem{char *instruction; int aluRes; int wrDatReg; char wrReg[4];};
 struct MemWb{char *instruction; int wrDatMem; int wrDatALU; char wrReg[4];};
 // state structure
 struct State{struct IfId ifid; struct IdEx idex; struct ExMem exmem; struct MemWb memwb;};
+// branh predictor structure
+struct BranchPred{int pc; int branchTarg; char* state;};
 
 // FUNCTION DEFINITIONS -------------------------------------------------------------------
 void translate(struct Instr*,const int*,int);		// translates machine language into bits I can store into the Instr struct
@@ -45,6 +47,7 @@ int main(){
 	const struct IdEx EmptyIdex={.instruction="NOOP",.rs="0",.rt="0",.rd="0"};
 	const struct ExMem EmptyExmem={.instruction="NOOP",.wrReg="0"};
 	const struct MemWb EmptyMemwb={.instruction="NOOP",.wrReg="0"};
+	const struct BranchPred EmptyBP={.state="WNT"};
 	
 	int pc = 0;			// holds current PC
 	int halt = 0;			// 0 if false 1 if true
@@ -54,10 +57,13 @@ int main(){
 	int dataWords[32];
 	struct Instr instructions[500];	// 500 to account for stalls (I know it's less but I'm not doing the math)
 		int i;
-		for(i = 0; i < 100; i++)
+		for(i = 0; i < 500; i++)
 			instructions[i] = EmptyInstr;
 	struct State prevState = EmptyState;
 	struct State newState = EmptyState;
+	struct BranchPred branchPred[100];
+		for(i = 0; i < 100; i++)
+			branchPred[i] = EmptyBP;
 
 	char currLine[13];		// 13 is the number of digits in the largest possible signed int (plus a negative symbol and a null character)
 	// getting data and populating storage*****************************************************
@@ -149,6 +155,11 @@ int main(){
 				}
 			}
 			newState.idex.branchTarg = ((instructions[cycle-1].imm*4) + newState.idex.pcPlus4);
+			// populating branch predictor and dealing with a branch
+			if (strncmp(instructions[cycle-1].inst,"bne",3) == 0){
+				branchPred[numBranches].pc = newState.idex.pcPlus4;
+				branchPred[numBranches++].branchTarg = newState.idex.branchTarg;
+			}
 		}
 		// EX/MEM
 		newState.exmem = EmptyExmem;
@@ -160,6 +171,11 @@ int main(){
 			if (instructions[cycle-2].rt == instructions[cycle-3].destReg)
 				newState.exmem.wrDatReg = instructions[cycle-3].destCont;
 			strcpy(newState.exmem.wrReg,findWrReg(instructions[cycle-2]));
+			
+			// branch handling
+			if (strncmp(instructions[cycle-2].inst,"bne",3) == 0 && instructions[cycle-2].destCont == 1){
+				printf("Should Branch\n");
+			}
 		}
 		// MEM/WB
 		newState.memwb = EmptyMemwb;
@@ -186,7 +202,7 @@ int main(){
 	printf("Total number of stalls: %d\n", numStalls);
 	printf("Total number of branches: %d\n", numBranches);
 	printf("Total number of mispredicted branches: %d\n", numMisBranches);
-	
+
 	return 0;
 }// end main
 
@@ -359,7 +375,8 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 		memset(rd,0,sizeof(rd));
 		strcat(rs,findRegName(inst[i].rs));
 		strcat(rt,findRegName(inst[i].rt));
-		strcat(rd,findRegName(inst[i].rd));
+		if (inst[i].op != 5)			// was giving me a segfault for some reason
+			strcat(rd,findRegName(inst[i].rd));
 		// finding mips representation of an instruction
 		switch(inst[i].op)
 		{
