@@ -1,0 +1,35 @@
+// Ryan Gutierrez
+// Project 2 - Pipeline Simulator
+// CDA 3101: Spring 2019
+
+	The c file I have provided as part of my submission for this project can handle
+everything up to, and including, forwarding (if using the grade breakdown in the project
+2 pdf). My program is in no way able to handle branching (neither by assuming a branch is
+not taken and correcting later, nor using prediction). My program seemingly handles all
+instructions properly (even when forwarding), with the exception of bne since it won't
+actually branch when it needs to.
+	Apart from the above information, there are no issues within my program to the
+best of my knowledge.
+
+
+
+Test Suite Breakdown:
+
+	-branch.asm was created to test for regular branch instructions that would skip
+	ahead in the program
+
+	-forwarding.asm was created to thoroughly test forwarding with all different types
+	of instructions
+
+	-instructionFill.asm was created to test whether my program could handle fully
+	populating the data memory and completely filling all the 't' and 's' registers
+	(for some reason testGen seems to not properly translate at least one of the 'v'
+	registers).
+
+	-limitAndTryAll.asm was created to test the instruction limit (100) and try at
+	least one of every instruction.
+
+	-loop.asm was created to test for a branch instruction that would cause a loop
+
+	-loopBreak.asm was created to test for a branch instruction that would break out
+	of a loop created by a different branch instruction.

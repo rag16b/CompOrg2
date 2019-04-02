@@ -4,9 +4,6 @@
 // CDA3101
 // Pipeline Simulator
 
-// Potential problems:	(this is for me to remind myself when I come back after not working on the program for a bit)
-			
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -95,15 +92,6 @@ int main(){
 	// populating instruction struct array with translated machine instructions
 	translate(instructions,machInstr,numOfIn);
 		
-	// PRINTING DATA FOR ***TESTING*** PURPOSES
-	/*for (i = 0; i < numOfIn; i++)
-		printf("%d: %d\n",i+1,machInstr[i]);
-	/*for (i = 0; i < numOfDM; i++)
-		printf("%d: %d\n",numOfIn+i+1,dataMem[i]);
-	for (i = 0; i < numOfIn; i++)
-		printf("%c %d %d %d %d %d %d %d %s\n",instructions[i].type,instructions[i].op,instructions[i].rs,instructions[i].rt,instructions[i].rd,instructions[i].shamt,instructions[i].funct,instructions[i].imm,instructions[i].inst);
-	*/
-	
 	// actual pipeline logic*******************************************************************
 	i = 0;
 	int cycle = 0;
@@ -133,7 +121,7 @@ int main(){
 				instructions[cycle-1].destCont = instructions[cycle-1].aluRes;
 				if (strncmp(instructions[cycle-1].inst,"lw",2) == 0)
 					instructions[cycle-1].destCont = dataMem[(instructions[cycle-1].aluRes-numOfIn*4)/4];
-			// DEALING WITH STALLS (testing a specific instruciton in test case 1 currently)
+			// DEALING WITH STALLS
 			if ((cycle-2) >= 0 && strncmp(instructions[cycle-2].inst,"lw",2) == 0 && needStall(instructions[cycle-2],instructions[cycle-1]) == 1){
 					stall(instructions,EmptyInstr,cycle,numOfIn+(numStalls++));
 					pc -= 4;	// to make sure pc doesn't change during a stall
@@ -155,7 +143,7 @@ int main(){
 				}
 			}
 			newState.idex.branchTarg = ((instructions[cycle-1].imm*4) + newState.idex.pcPlus4);
-			// populating branch predictor and dealing with a branch
+			// populating branch predictor
 			if (strncmp(instructions[cycle-1].inst,"bne",3) == 0){
 				branchPred[numBranches].pc = newState.idex.pcPlus4;
 				branchPred[numBranches++].branchTarg = newState.idex.branchTarg;
@@ -167,21 +155,23 @@ int main(){
 			newState.exmem.instruction = instructions[cycle-2].inst;
 			newState.exmem.aluRes = instructions[cycle-2].aluRes;
 			// updating writeDataReg
-			newState.exmem.wrDatReg = regFile[instructions[cycle-2].rt];			// CHECK AFTER FINISHING PIPELINING
+			newState.exmem.wrDatReg = regFile[instructions[cycle-2].rt];
 			if (instructions[cycle-2].rt == instructions[cycle-3].destReg)
 				newState.exmem.wrDatReg = instructions[cycle-3].destCont;
+			// end writeDataReg update
 			strcpy(newState.exmem.wrReg,findWrReg(instructions[cycle-2]));
 			
 			// branch handling
 			if (strncmp(instructions[cycle-2].inst,"bne",3) == 0 && instructions[cycle-2].destCont == 1){
-				printf("Should Branch\n");
+				//printf("Should Branch\n");
+				// handle branching without prediction here
 			}
 		}
 		// MEM/WB
 		newState.memwb = EmptyMemwb;
 		if (((cycle-3) >= 0 && (cycle-3) < numOfIn+numStalls) && strcmp(instructions[cycle-3].inst,"NOOP") != 0){
 			newState.memwb.instruction = instructions[cycle-3].inst;
-			// should only be updated when data memory is accessed (STILL CANNOT TELL WHAT THE KECJ THIS DOES*********************)
+			// should only be updated when data memory is accessed (referring to wrDatMem)
 			if (strncmp(instructions[cycle-3].inst,"lw",2) == 0)
 				newState.memwb.wrDatMem = dataMem[(prevState.exmem.aluRes-numOfIn*4)/4];
 			newState.memwb.wrDatALU = prevState.exmem.aluRes;
@@ -281,11 +271,7 @@ int aluRes(struct Instr inst, struct Instr test1, struct Instr test2, int* regFi
 	int result;
 	int rs = regFile[inst.rs];
 	int rt = regFile[inst.rt];
-
-	// printing for testing purposes
-	//printf("%d %d %s\n",isHazard(inst,test1,test2,cycle),regFile[8],inst.inst);
-	//printf("%d\n",test2.aluRes);
-	//printf("%d %d %d\n",inst.destCont,test1.destCont,test2.destCont);
+	// FORWARDING HANDLING
 	if (isHazard(inst,test1,test2,cycle) > -1){		// if there is a hazard... forward appropiately based on cases 0-9
 		switch(isHazard(inst,test1,test2,cycle))
 		{
@@ -353,6 +339,7 @@ int aluRes(struct Instr inst, struct Instr test1, struct Instr test2, int* regFi
 	return result;
 }
 
+// populating instruction struct array with translated machine instructions 
 void translate(struct Instr* inst,const int* machInstr, int size){
 	int currLine = 0;
 	int i;
@@ -361,7 +348,7 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 	char rd[4];
 	for (i = 0; i < size; i++){
 		currLine = machInstr[i];
-		// handling other instructions
+		// grabbing each part of the instruction
 		inst[i].op = currLine >> 26 & 63;
 		inst[i].rs = (currLine >> 21) & 31;
 		inst[i].rt = (currLine >> 16) & 31;
@@ -375,7 +362,7 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 		memset(rd,0,sizeof(rd));
 		strcat(rs,findRegName(inst[i].rs));
 		strcat(rt,findRegName(inst[i].rt));
-		if (inst[i].op != 5)			// was giving me a segfault for some reason
+		if (inst[i].op != 5)			// was giving me a segfault with bne in some cases for some reason
 			strcat(rd,findRegName(inst[i].rd));
 		// finding mips representation of an instruction
 		switch(inst[i].op)
@@ -430,6 +417,7 @@ void translate(struct Instr* inst,const int* machInstr, int size){
 	}	
 }// end translate
 
+// returns a string of the given register
 char* findRegName(int reg){
 	char* temp = NULL;
 	char numAsStr[2];
