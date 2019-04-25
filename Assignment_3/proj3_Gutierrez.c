@@ -11,9 +11,11 @@
 
 // reference struct that will be used to hold references throughoutt an array
 typedef struct {char type; int addrs;} Reference;
-typedef struct {int tag; int dirty;} Word;	// ADD INT LRU TO THIS STRUCT**************
+typedef struct {int tag; int dirty; int trackLRU;} Word;
 
 int main(){
+	const Word EmptyWord = {.tag = -1};
+	
 	int blockSize;	// block size
 	int numSets;	// number of sets
 	int setAssoc;	// set associativity
@@ -44,33 +46,95 @@ int main(){
 	
 	// dynamically allocating a 2d array of Word structs
 	Word **cache = (Word **)malloc(numSets * sizeof(Word*));
-	int r = 0;
-	for (r; r < numSets; r++)
-		cache[r] = (Word *)malloc(setAssoc * sizeof(Word));
+	int row;
+	for (row = 0; row < numSets; row++)
+		cache[row] = (Word *)malloc(setAssoc * sizeof(Word));
 	
+	// initializing the cache with all -1 in the tag so I can find completely empty sets
+	int col;
+	for (row = 0; row < numSets; row++)
+		for (col = 0; col < setAssoc; col++)
+			cache[row][col] = EmptyWord;
+
 	// CACHING SECTION
-	int i = 0;
-	for (i; i < numRef; i++) {
+	// WRITE-THROUGH, NO WRITE ALLOCATE
+	int i;
+	for (i = 0; i < numRef; i++) {
 		// prints references
 		//printf("%c %d\n",refs[i].type,refs[i].addrs);
 		
-		// WRITE-THROUGH, NO WRITE ALLOCATE
 		// get tag and index for current reference
 		index = (refs[i].addrs >> numOffBits) & (0xFFFFFFFF >> (numTagBits + numOffBits));
 		tag = refs[i].addrs >> (numIndBits + numOffBits);
+		
+		// prints index and tag
 		//printf("Index: %d	Tag: %d\n",index,tag);
 		
 		// check read or write
 		if (refs[i].type == 'W') {
+			int currRef;
+			int didHit = 0;
 			// goto index and check every slot in set to see if its already inside
-			// yes -> hit++, memref++, update cache (LRU = i)
-			// no -> mis++, memref++
+			for (currRef = 0; currRef < setAssoc; currRef++) {
+				// tag and index are in cache
+				if (cache[index][currRef].tag == tag) {
+					wtHit++;
+					wtMemRef++;
+					cache[index][currRef].trackLRU = i;	// update cache
+					didHit = 1;
+					break;
+				}
+			}
+			// tag and index are not in cache
+			if (didHit == 0) {
+				wtMiss++;
+				wtMemRef++;
+			}
 		}
 		else if (refs[i].type == 'R') {
-			
+			int currRef;
+			int didHit = 0;
+			// goto index and check every slot in set to see if its already inside
+			for (currRef = 0; currRef < setAssoc; currRef++) {
+				// tag and index are in cache
+				if (cache[index][currRef].tag == tag) {
+					wtHit++;
+					didHit = 1;
+					break;
+				}
+			}
+			// tag and index are not in cache
+			if (didHit == 0) {
+				int isRoom = 0;
+				wtMiss++;
+				// is there room in cache?
+				for (currRef = 0; currRef < setAssoc; currRef++) {
+					// if there is room in the cache
+					if (cache[index][currRef].tag == -1) {
+						wtMemRef++;
+						// write in
+						cache[index][currRef].tag = tag;
+						cache[index][currRef].trackLRU = i;
+						isRoom = 1;
+						break;
+					}
+				}
+				// if there is NOT room in the cache
+				if (isRoom == 0) {
+					wtMemRef++;
+					// finding the LRU
+					int LRUref = 0;
+					for (currRef = 0; currRef < setAssoc; currRef++)
+						if (cache[index][LRUref].trackLRU > cache[index][currRef].trackLRU)
+							LRUref = currRef;
+					// replacing the LRU
+					cache[index][LRUref].tag = tag;
+					cache[index][LRUref].trackLRU = i;
+				}
+			}	
 		}
 		else
-			printf("Error: One of the references was neither read nor write.");
+			printf("Error: One of the references was neither read nor written.");
 	}
 	
 	printf("****************************************\nWrite-through with No Write Allocate\n****************************************\n");
@@ -79,20 +143,18 @@ int main(){
 	printf("Total number of references: %d\nHits: %d\nMisses: %d\nMemory References: %d\n\n",numRef,wbHit,wbMiss,wbMemRef);
 	
 	
-	// USED TO PRINT CONTENTS OF 2D ARRAY ////////////////////////////////////////////////////////////
-	printf("\n");											//
-	int c = 0;											//
-	for (r = 0; r < numSets; r++)									//
-		for (c = 0; c < setAssoc; c++)								//
-			printf("cache[%d][%d] = %d | %d\n",r,c,cache[r][c].tag,cache[r][c].dirty);	//
-	printf("\n");											//
-	// end cache print ///////////////////////////////////////////////////////////////////////////////
+	// USED TO PRINT CONTENTS OF 2D ARRAY ////////////////////////////////////////////////////////////////////////////////////////////////////
+	/*printf("\n");																//
+	for (row = 0; row < numSets; row++)													//
+		for (col = 0; col < setAssoc; col++)												//
+			printf("cache[%d][%d] = %d | %d | %d\n",row,col,cache[row][col].tag,cache[row][col].dirty,cache[row][col].trackLRU);	//
+	printf("\n");*/																//
+	// end cache print ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
 		
 	// freeing all allocated data
-	r = 0;
-	for (r; r < numSets; r++)
-		free(cache[r]);
+	for (row = 0; row < numSets; row++)
+		free(cache[row]);
 	free(cache);
 	
 	return 0;
