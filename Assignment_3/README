@@ -1,0 +1,30 @@
+// Ryan Gutierrez
+// Project 3 - Cache Simulator
+// CDA 3101: Spring 2019
+
+	As far as I know have successfully implemented all the requirements
+for the project in my program. The only known issue I found was that when
+comparing the output of my program vs the provided executable (ONLY when
+running it with my maxNumRef test file) I had one more Memory Reference in
+the Write-back with Write Allocate cache.
+
+Test Suite Breakdown:
+
+-allReads was a test case I made to test a case in which my program only
+encountered reads.
+
+-allWrites is the same thing as allReads but instead of reads it has writes
+
+-directMapped was created to test a scenario with a direct mapped cache
+
+-fullyAssociative was created to test a fully associative cache. This
+actually helped me solve an issue I was unaware of: my index was being
+calculated incorrectly in this scenario.
+
+-maxNumRef was created to test a case with the maximum number of references
+which was 100
+
+-randTest was created as an extra test with no explicit purpose
+
+***Note that throughout all of the test cases I tested various block sizes,
+   number of sets, and associativities.
