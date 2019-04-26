@@ -56,8 +56,8 @@ int main(){
 		for (col = 0; col < setAssoc; col++)
 			cache[row][col] = EmptyWord;
 
-	// CACHING SECTION
-	// WRITE-THROUGH, NO WRITE ALLOCATE
+	// --------------------CACHING SECTION--------------------
+	// WRITE-THROUGH, NO WRITE ALLOCATE SIMULATION
 	int i;
 	for (i = 0; i < numRef; i++) {
 		// prints references
@@ -66,6 +66,10 @@ int main(){
 		// get tag and index for current reference
 		index = (refs[i].addrs >> numOffBits) & (0xFFFFFFFF >> (numTagBits + numOffBits));
 		tag = refs[i].addrs >> (numIndBits + numOffBits);
+
+		// to handle a fully associative cache
+		if (numIndBits == 0)
+			index = 0;
 		
 		// prints index and tag
 		//printf("Index: %d	Tag: %d\n",index,tag);
@@ -105,8 +109,8 @@ int main(){
 			}
 			// tag and index are not in cache
 			if (didHit == 0) {
-				int isRoom = 0;
 				wtMiss++;
+				int isRoom = 0;
 				// is there room in cache?
 				for (currRef = 0; currRef < setAssoc; currRef++) {
 					// if there is room in the cache
@@ -137,6 +141,124 @@ int main(){
 			printf("Error: One of the references was neither read nor written.");
 	}
 	
+	// clearing the cache array for use in the write-back, write allocate
+	for (row = 0; row < numSets; row++)
+		for (col = 0; col < setAssoc; col++)
+			cache[row][col] = EmptyWord;
+	
+	// WRITE-BACK, WRITE ALLOCATE CACHE SIMULATION
+	for (i = 0; i < numRef; i++) {
+		// get tag and index for current reference
+		index = (refs[i].addrs >> numOffBits) & (0xFFFFFFFF >> (numTagBits + numOffBits));
+		tag = refs[i].addrs >> (numIndBits + numOffBits);
+
+		// to handle a fully associative cache
+		if (numIndBits == 0)
+			index = 0;
+		
+		// check read or write
+		if (refs[i].type == 'W') {
+			int currRef;
+			int didHit = 0;
+			// goto index and check every slot in set to see if its already inside
+			for (currRef = 0; currRef < setAssoc; currRef++) {
+				// tag and index are in cache
+				if (cache[index][currRef].tag == tag) {
+					wbHit++;
+					cache[index][currRef].trackLRU = i;	// update cache
+					cache[index][currRef].dirty = 1;	// mark dirty
+					didHit = 1;
+					break;
+				}
+			}
+			// tag and index are not in cache
+			if (didHit == 0) {
+				wbMiss++;
+				int isRoom = 0;
+				// is there room in cache?
+				for (currRef = 0; currRef < setAssoc; currRef++) {
+					// if there is room in the cache
+					if (cache[index][currRef].tag == -1) {
+						wbMemRef++;
+						// write in
+						cache[index][currRef].tag = tag;
+						cache[index][currRef].trackLRU = i;
+						cache[index][currRef].dirty = 1;
+						isRoom = 1;
+						break;
+					}
+				}
+				// if there is NOT room in the cache
+				if (isRoom == 0) {
+					// finding the LRU
+					int LRUref = 0;
+					for (currRef = 0; currRef < setAssoc; currRef++)
+						if (cache[index][LRUref].trackLRU > cache[index][currRef].trackLRU)
+							LRUref = currRef;
+					// checking if there was a previous write
+					if (cache[index][LRUref].dirty == 1)
+						wbMemRef += 2;
+					else
+						wbMemRef++;
+					// replacing the LRU (updating the cache)
+					cache[index][LRUref].tag = tag;
+					cache[index][LRUref].trackLRU = i;
+					cache[index][LRUref].dirty = 1;
+				}
+			}			
+		}
+		else if (refs[i].type == 'R') {
+			int currRef;
+			int didHit = 0;
+			// goto index and check every slot in set to see if its already inside
+			for (currRef = 0; currRef < setAssoc; currRef++) {
+				// tag and index are in cache
+				if (cache[index][currRef].tag == tag) {
+					wbHit++;
+					didHit = 1;
+					break;
+				}
+			}
+			// tag and index are not in cache
+			if (didHit == 0) {
+				wbMiss++;
+				int isRoom = 0;
+				// is there room in cache?
+				for (currRef = 0; currRef < setAssoc; currRef++) {
+					// if there is room in the cache
+					if (cache[index][currRef].tag == -1) {
+						wbMemRef++;
+						// write in
+						cache[index][currRef].tag = tag;
+						cache[index][currRef].trackLRU = i;
+						cache[index][currRef].dirty = 0;	// NOT 100% SURE I SHOULD BE 'RESETTING' THE DIRTY BIT
+						isRoom = 1;
+						break;
+					}
+				}
+				// if there is NOT room in the cache
+				if (isRoom == 0) {
+					// finding the LRU
+					int LRUref = 0;
+					for (currRef = 0; currRef < setAssoc; currRef++)
+						if (cache[index][LRUref].trackLRU > cache[index][currRef].trackLRU)
+							LRUref = currRef;
+					// checking if there was a previous write
+					if (cache[index][LRUref].dirty == 1)
+						wbMemRef += 2;
+					else
+						wbMemRef++;
+					// replacing the LRU (updating the cache)
+					cache[index][LRUref].tag = tag;
+					cache[index][LRUref].trackLRU = i;
+					cache[index][LRUref].dirty = 0;			// NOT 100% SURE I SHOULD BE 'RESETTING' THE DIRY BIT
+				}
+			}
+		}
+		else
+			printf("Error: One of the references was neither read nor written.");			
+	}
+		
 	printf("****************************************\nWrite-through with No Write Allocate\n****************************************\n");
 	printf("Total number of references: %d\nHits: %d\nMisses: %d\nMemory References: %d\n",numRef,wtHit,wtMiss,wtMemRef);
 	printf("****************************************\nWrite-back with Write Allocate\n****************************************\n");
@@ -151,7 +273,7 @@ int main(){
 	printf("\n");*/																//
 	// end cache print ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
-		
+	
 	// freeing all allocated data
 	for (row = 0; row < numSets; row++)
 		free(cache[row]);
